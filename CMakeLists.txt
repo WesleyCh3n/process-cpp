@@ -4,4 +4,7 @@ project(run)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable(main main.cpp)
+add_executable(main main.cpp
+  ./unix.cpp
+  ./windows.cpp
+)

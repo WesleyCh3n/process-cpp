@@ -1,248 +1,116 @@
 #pragma once
-#include <atomic>
-#include <iomanip>
-#include <windows.h>
 
-#include <iostream>
 #include <optional>
-#include <stdexcept>
-#include <thread>
-#include <utility>
-#include <vector>
-
-#include "queue.hpp"
-#include "util.hpp"
+#include <string>
 
 namespace process {
-using std::atomic_bool;
-using std::optional;
-using std::pair;
-using std::string;
-using std::thread;
-using std::vector;
+using std::unique_ptr;
 
 class Stdio {
 public:
-  enum Type { INHERIT, PIPE };
+  ~Stdio();
+  Stdio(Stdio &&other);
+  Stdio &operator=(Stdio &&other);
 
-  Stdio(Type t) : type_(t) {}
-  Type type() const { return type_; }
-  Stdio(const Stdio &) = delete;
-  Stdio &operator=(const Stdio &) = delete;
-
-  Stdio(Stdio &&other) { *this = std::move(other); };
-  Stdio &operator=(Stdio &&other) {
-    if (&other != this) {
-      this->read_ = other.read_;
-      this->write_ = other.write_;
-      this->type_ = other.type_;
-      other.read_ = nullptr;
-      other.write_ = nullptr;
-    }
-    return *this;
-  }
-
-  static Stdio pipe() { return make_pipe(); }
-  static Stdio inherit() { return Stdio(Type::INHERIT); }
-
-  friend class Child;
-  friend class Command;
+  enum class Value { Inherit, NewPipe, FromPipe, Null };
+  static Stdio pipe();
+  static Stdio inherit();
+  static Stdio null();
 
 private:
-  Type type_;
-  HANDLE read_ = nullptr;
-  HANDLE write_ = nullptr;
-  void close_write() {
-    CloseHandle(write_);
-    write_ = nullptr;
-  };
-  void close_read() {
-    CloseHandle(read_);
-    read_ = nullptr;
-  };
-  static Stdio make_pipe() {
-    Stdio io = Stdio(Type::PIPE);
-    SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), NULL, TRUE};
-    if (!CreatePipe(&io.read_, &io.write_, &sa, 0) ||
-        !SetHandleInformation(io.read_, HANDLE_FLAG_INHERIT, 0)) {
-      throw std::runtime_error("Failed to create pipe");
-    }
-    return io;
-  }
+  Stdio(Value value);
+  class Impl;
+  std::unique_ptr<Impl> impl_;
+  friend class Command;
+};
+
+class ChildStdin {
+public:
+  ChildStdin();
+  ~ChildStdin();
+  ChildStdin(ChildStdin &&other);
+  ChildStdin &operator=(ChildStdin &&other);
+
+  ssize_t write(char buffer[], size_t size);
+
+private:
+  class Impl;
+  unique_ptr<Impl> impl_;
+  friend class Command;
+};
+
+class ChildStdout {
+public:
+  ChildStdout();
+  ~ChildStdout();
+  ChildStdout(ChildStdout &&other);
+  ChildStdout &operator=(ChildStdout &&other);
+
+  ssize_t read(char buffer[], size_t size);
+
+private:
+  class Impl;
+  unique_ptr<Impl> impl_;
+  friend class Command;
+};
+
+class ChildStderr {
+public:
+  ChildStderr();
+  ~ChildStderr();
+  ChildStderr(ChildStderr &&other);
+  ChildStderr &operator=(ChildStderr &&other);
+
+  ssize_t read(char buffer[], size_t size);
+
+private:
+  class Impl;
+  unique_ptr<Impl> impl_;
+  friend class Command;
 };
 
 class ExitStatus {
-  DWORD code_;
-  friend class Child;
-
-public:
-  bool success() { return code_ == 0; }
-  int32_t code() { return code_; }
+  // private:
+  //   class Impl;
+  //   unique_ptr<Impl> impl_;
 };
 
 class Child {
-  std::unique_ptr<PROCESS_INFORMATION> pi_;
-  Stdio std_out_io_, std_err_io_;
-  atomic_bool finish_;
-  ThreadSafeQueue<char> out_queue_;
-  ThreadSafeQueue<char> err_queue_;
-  vector<thread> io_thread_;
-
-  void read_pipe(HANDLE pipe_handle, ThreadSafeQueue<char> &q, bool out) {
-    CHAR buffer[4096];
-    DWORD bytesRead;
-    while (
-        ReadFile(pipe_handle, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
-      if (bytesRead == 0) {
-        break;
-      }
-      buffer[bytesRead] = '\0';
-      std::cout << (out ? "OUT" : "ERR") << " buffer: " << std::quoted(buffer);
-      // q.push_bulk(vector<char>(buffer, buffer + bytesRead));
-    }
-  }
-
 public:
-  Child(std::unique_ptr<PROCESS_INFORMATION> pi, Stdio std_out_io,
-        Stdio std_err_io)
-      : pi_(std::move(pi)), std_out_io_(std::move(std_out_io)),
-        std_err_io_(std::move(std_err_io)) {
-    std::cout << "start\n";
-    if (std_out_io_.type() == Stdio::Type::PIPE) {
-      io_thread_.emplace_back(std::thread([&]() {
-        CHAR buffer[4096];
-        DWORD bytesRead;
-        while (true) {
-          BOOL success = ReadFile(std_out_io_.read_, buffer, sizeof(buffer) - 1,
-                                  &bytesRead, NULL);
-          if (!success || bytesRead == 0) {
-            break; // Exit the loop if no more data
-          }
-          buffer[bytesRead] = '\0'; // Null-terminate the string
-          std::cout << "get out: " << buffer;
-        }
-      }));
-      // io_thread_.back().detach();
-    }
-    if (std_err_io_.type() == Stdio::Type::PIPE) {
-      io_thread_.emplace_back(std::thread([&]() {
-        CHAR buffer[4096];
-        DWORD bytesRead;
-        while (true) {
-          BOOL success = ReadFile(std_err_io_.read_, buffer, sizeof(buffer) - 1,
-                                  &bytesRead, NULL);
-          if (!success || bytesRead == 0) {
-            break; // Exit the loop if no more data
-          }
-          buffer[bytesRead] = '\0'; // Null-terminate the string
-          std::cout << "get err: " << buffer;
-        }
-      }));
-      // io_thread_.back().detach();
-    }
-  }
-  ~Child() {}
+  std::optional<ChildStdin> io_stdin;
+  std::optional<ChildStdout> io_stdout;
+  std::optional<ChildStderr> io_stderr;
 
-  ExitStatus wait() {
-    ExitStatus status;
-    if (WaitForSingleObject(pi_->hProcess, INFINITE) != WAIT_OBJECT_0) {
-      std::cout << GetLastErrorAsString() << '\n';
-      throw std::runtime_error("Failed to wait for single object");
-    }
-    // if (GetExitCodeProcess(pi_->hProcess, &status.code_) ==
-    //     0) { // TODO: error handle
-    //   std::cout << GetLastErrorAsString() << '\n';
-    //   throw std::runtime_error("Failed to get exit code process");
-    // }
-    std_out_io_.close_read();
-    std_err_io_.close_read();
-    for (auto &t : io_thread_) {
-      t.join();
-    }
-    return status;
-  }
+  ~Child();
+  Child(Child &&other);
+  Child &operator=(Child &&other);
 
-  optional<ExitStatus> try_wait() {
-    if (WaitForSingleObject(pi_->hProcess, 0) == WAIT_OBJECT_0) {
-      ExitStatus status;
-      if (GetExitCodeProcess(pi_->hProcess, &status.code_) ==
-          0) { // TODO: error handle
-        std::cout << GetLastErrorAsString() << '\n';
-      }
-      return status;
-    }
-    return std::nullopt;
-  }
+  int id();
+  void kill();
+  ExitStatus wait();
+  void try_wait();
 
-  void kill() { throw std::logic_error("Function not yet implemented"); }
-
-  string read_stdout(char delimiter = '\n') {
-    string result;
-    while (!out_queue_.empty()) {
-      result.push_back(' ');
-      out_queue_.pop(result.back());
-      if (result.back() == delimiter) {
-        break;
-      }
-    }
-    return result;
-  }
+private:
+  Child();
+  struct Impl;
+  unique_ptr<Impl> impl_;
+  friend class Command;
 };
 
-// class Output {
-//   int exist_status;
-//   vector<char> std_out;
-//   vector<char> std_err;
-// };
-
 class Command {
-  string app_;
-  string arg_;
-  Stdio std_out_io_, std_err_io_; // default to inherit
-
 public:
-  Command()
-      : app_(string()), std_out_io_(std::move(Stdio::inherit())),
-        std_err_io_(std::move(Stdio::inherit())) {}
-  Command &&arg(string arg) {
-    arg_ = arg;
-    return std::move(*this);
-  }
-  Command &&std_out(Stdio io) {
-    std_out_io_ = std::move(io);
-    return std::move(*this);
-  };
-  Command &&std_err(Stdio io) {
-    std_err_io_ = std::move(io);
-    return std::move(*this);
-  };
-  Child spawn() {
-    // PROCESS_INFORMATION pi = {0};
-    auto pi = std::make_unique<PROCESS_INFORMATION>();
-    STARTUPINFO si = {0};
-    si.cb = sizeof(STARTUPINFO);
-    si.hStdOutput = std_out_io_.type() == Stdio::Type::PIPE
-                        ? std_out_io_.write_
-                        : GetStdHandle(STD_OUTPUT_HANDLE);
-    si.hStdError = std_err_io_.type() == Stdio::Type::PIPE
-                       ? std_err_io_.write_
-                       : GetStdHandle(STD_ERROR_HANDLE);
-    si.dwFlags |= STARTF_USESTDHANDLES;
-    // Create the child process
-    if (!CreateProcess(nullptr, const_cast<char *>(arg_.c_str()), nullptr,
-                       nullptr, TRUE, 0, nullptr, nullptr, &si, pi.get())) {
-      throw std::runtime_error("Failed to create process");
-    }
+  Command();
+  ~Command();
+  Command(Command &&other);            // move ctor
+  Command &operator=(Command &&other); // move assignment
 
-    if (std_out_io_.type() == Stdio::Type::PIPE)
-      std_out_io_.close_write();
-    if (std_err_io_.type() == Stdio::Type::PIPE)
-      std_err_io_.close_write();
+  Command &&arg(std::string arg);
+  Command &&std_out(Stdio io);
+  Command &&std_err(Stdio io);
+  Child spawn();
 
-    return Child(std::move(pi), std::move(std_out_io_), std::move(std_err_io_));
-  }
-  // eager run
-  // void status() {}
-  // void output() {}
+private:
+  class Impl;
+  unique_ptr<Impl> impl_;
 };
 } // namespace process
