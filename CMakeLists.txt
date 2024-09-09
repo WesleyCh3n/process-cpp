@@ -4,7 +4,7 @@ project(std-process)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 20)
 
-add_library(std-process SHARED
+add_library(std-process
   src/unix.cpp
   src/windows.cpp
 )
@@ -22,7 +22,7 @@ set(CONFIG_EXPORT_NAME std-process-config)
 set(PROJECT_CONFIG ${CMAKE_CURRENT_BINARY_DIR}/${CONFIG_EXPORT_NAME}.cmake)
 
 install(TARGETS std-process EXPORT ${CONFIG_EXPORT_NAME}
-        RUNTIME DESTINATION bin
+        LIBRARY DESTINATION bin
         ARCHIVE DESTINATION lib
         PUBLIC_HEADER DESTINATION include/std-process)
 export(TARGETS std-process
