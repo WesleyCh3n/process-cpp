@@ -1,7 +1,14 @@
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <string>
+#include <vector>
+
+#ifdef _MSC_VER
+#include <basetsd.h>
+typedef SSIZE_T ssize_t;
+#endif
 
 namespace process {
 using std::unique_ptr;
@@ -19,7 +26,7 @@ public:
 
 private:
   Stdio(Value value);
-  class Impl;
+  struct Impl;
   std::unique_ptr<Impl> impl_;
   friend class Command;
 };
@@ -34,7 +41,7 @@ public:
   ssize_t write(char buffer[], size_t size);
 
 private:
-  class Impl;
+  struct Impl;
   unique_ptr<Impl> impl_;
   friend class Command;
 };
@@ -49,7 +56,7 @@ public:
   ssize_t read(char buffer[], size_t size);
 
 private:
-  class Impl;
+  struct Impl;
   unique_ptr<Impl> impl_;
   friend class Command;
 };
@@ -64,7 +71,7 @@ public:
   ssize_t read(char buffer[], size_t size);
 
 private:
-  class Impl;
+  struct Impl;
   unique_ptr<Impl> impl_;
   friend class Command;
 };
@@ -99,12 +106,13 @@ private:
 
 class Command {
 public:
-  Command();
+  Command(const std::string &app = std::string());
   ~Command();
   Command(Command &&other);            // move ctor
   Command &operator=(Command &&other); // move assignment
 
-  Command &&arg(std::string arg);
+  Command &&arg(const std::string &arg);
+  Command &&args(const std::vector<std::string> &arg);
   Command &&std_out(Stdio io);
   Command &&std_err(Stdio io);
   Child spawn();
