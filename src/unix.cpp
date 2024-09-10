@@ -251,6 +251,9 @@ public:
         execl(app.c_str(), arg.c_str(), nullptr);
       _exit(EXIT_FAILURE);
     }
+    if (auto fd = their_stdin) {
+      close(*fd);
+    }
     if (auto fd = their_stdout) {
       close(*fd);
     }
