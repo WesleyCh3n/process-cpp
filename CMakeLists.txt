@@ -28,3 +28,10 @@ install(TARGETS std-process EXPORT ${CONFIG_EXPORT_NAME}
 export(TARGETS std-process
        NAMESPACE std-process::
        FILE ${PROJECT_CONFIG})
+
+add_executable(main
+  main.cpp
+)
+target_link_libraries(main
+  std-process
+)

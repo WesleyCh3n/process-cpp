@@ -6,6 +6,12 @@
 int main(int argc, char *argv[]) {
   try {
     {
+      auto output = process::Command().arg(argv[1]).output();
+      std::cout << std::boolalpha << output.status.success() << std::endl;
+      std::cout << std::quoted(output.std_out) << std::endl;
+      std::cout << std::quoted(output.std_err) << std::endl;
+    }
+    /* {
       auto child = process::Command(R"(.\build\Debug\test.exe)").spawn();
       std::cout << "pid: " << child.id() << '\n';
       child.wait();
@@ -52,7 +58,7 @@ int main(int argc, char *argv[]) {
       }
       child.wait();
     }
-    std::cout << std::string(80, '=') << std::endl;
+    std::cout << std::string(80, '=') << std::endl; */
   } catch (const std::exception &e) {
     std::cerr << e.what() << '\n';
   }

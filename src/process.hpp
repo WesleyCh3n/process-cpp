@@ -77,9 +77,24 @@ private:
 };
 
 class ExitStatus {
-  // private:
-  //   class Impl;
-  //   unique_ptr<Impl> impl_;
+public:
+  bool success();
+  std::optional<int> code();
+  ExitStatus();
+  ExitStatus(ExitStatus &&);
+  ExitStatus &operator=(ExitStatus &&);
+  ~ExitStatus();
+
+private:
+  struct Impl;
+  unique_ptr<Impl> impl_;
+  friend class Child;
+};
+
+struct Output {
+  ExitStatus status;
+  std::string std_out;
+  std::string std_err;
 };
 
 class Child {
@@ -94,6 +109,7 @@ public:
 
   int id();
   void kill();
+  Output wait_with_output();
   ExitStatus wait();
   void try_wait();
 
@@ -115,6 +131,7 @@ public:
   Command &&args(const std::vector<std::string> &arg);
   Command &&std_out(Stdio io);
   Command &&std_err(Stdio io);
+  Output output();
   Child spawn();
 
 private:

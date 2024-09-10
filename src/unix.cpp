@@ -26,6 +26,23 @@ struct Process {
     return exit_code;
   }
 };
+/*============================================================================*/
+struct ExitStatus::Impl {
+  optional<int> code;
+  Impl() : code(std::nullopt) {}
+  Impl(int result) : code(result) {}
+};
+ExitStatus::ExitStatus() : impl_(std::make_unique<Impl>()) {}
+ExitStatus::~ExitStatus() = default;
+ExitStatus::ExitStatus(ExitStatus &&other) { *this = std::move(other); }
+ExitStatus &ExitStatus::operator=(ExitStatus &&other) {
+  if (this != &other) {
+    this->impl_ = std::move(other.impl_);
+  }
+  return *this;
+}
+bool ExitStatus::success() { return impl_->code == 0; }
+optional<int> ExitStatus::code() { return impl_->code; }
 
 /*============================================================================*/
 Stdio::Stdio(Value v) : impl_(std::make_unique<Impl>(v)) {}
@@ -161,12 +178,27 @@ struct Child::Impl {
   int id() { return pi.pid; }
   ExitStatus wait() {
     int code = pi.wait();
-    std::cout << code << '\n';
-    return ExitStatus();
+    ExitStatus status;
+    status.impl_->code = code;
+    return status;
   }
 };
 int Child::id() { return impl_->id(); }
 ExitStatus Child::wait() { return impl_->wait(); }
+Output Child::wait_with_output() {
+  Output output;
+  char stdout_buf[2048], stderr_buf[2048];
+  ssize_t stdout_size = 0, stderr_size = 0;
+  while (((stdout_size = this->io_stdout->read(stdout_buf, 2048)) > 0) ||
+         ((stderr_size = this->io_stderr->read(stderr_buf, 2048)) > 0)) {
+    if (stdout_size > 0)
+      output.std_out += stdout_buf;
+    if (stderr_size > 0)
+      output.std_err += stderr_buf;
+  }
+  output.status = this->wait();
+  return output;
+}
 
 /*============================================================================*/
 class Command::Impl {
@@ -271,6 +303,13 @@ Command &&Command::std_err(Stdio io) {
   return std::move(*this);
 }
 Child Command::spawn() { return impl_->spawn(); }
+
+Output Command::output() {
+  impl_->set_stdout(Stdio::pipe());
+  impl_->set_stderr(Stdio::pipe());
+  Child child = impl_->spawn();
+  return child.wait_with_output();
+}
 
 } // namespace process
 
