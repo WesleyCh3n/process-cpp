@@ -9,6 +9,7 @@ namespace process {
 using std::optional;
 using std::pair;
 using std::string;
+using std::vector;
 
 /*============================================================================*/
 struct Process {
@@ -168,32 +169,31 @@ int Child::id() { return impl_->id(); }
 ExitStatus Child::wait() { return impl_->wait(); }
 
 /*============================================================================*/
-Command::Command() : impl_(std::make_unique<Impl>()){};
-Command::~Command(){};
-Command::Command(Command &&other) { *this = std::move(other); }
-Command &Command::operator=(Command &&other) {
-  if (this != &other) {
-    this->impl_ = std::move(other.impl_);
-  }
-  return *this;
-}
-
 class Command::Impl {
-  string cmds;
+  string app;
+  vector<string> args;
   Stdio io_stdin;
   Stdio io_stdout;
   Stdio io_stderr;
 
 public:
   Impl()
-      : cmds(string()), io_stdin(Stdio::inherit()), io_stdout(Stdio::inherit()),
-        io_stderr(Stdio::inherit()) {}
+      : app(string()), args(vector<string>()), io_stdin(Stdio::inherit()),
+        io_stdout(Stdio::inherit()), io_stderr(Stdio::inherit()) {}
   ~Impl() = default;
-  void set_args(string arg) { cmds = arg; }
+  void set_app(string str) { app = str; }
+  void add_args(const string &arg) { args.push_back(arg); }
   void set_stdin(Stdio io) { io_stdin = std::move(io); }
   void set_stdout(Stdio io) { io_stdout = std::move(io); }
   void set_stderr(Stdio io) { io_stderr = std::move(io); }
   Child spawn() {
+    string arg;
+    if (!args.empty()) {
+      arg += args[0];
+      for (int i = 1; i < args.size(); i += 1) {
+        arg += " " + args[i];
+      }
+    }
     auto [our_stdin, their_stdin] = io_stdin.impl_->to_fds(true);
     auto [our_stdout, their_stdout] = io_stdout.impl_->to_fds();
     auto [our_stderr, their_stderr] = io_stderr.impl_->to_fds();
@@ -213,7 +213,10 @@ public:
         dup2(*fd, STDERR_FILENO);
         close(*fd);
       }
-      execl("/bin/sh", "sh", "-c", cmds.c_str(), nullptr);
+      if (app.empty())
+        execl("/bin/sh", "sh", "-c", arg.c_str(), nullptr);
+      else
+        execl(app.c_str(), arg.c_str(), nullptr);
       _exit(EXIT_FAILURE);
     }
     if (auto fd = their_stdout) {
@@ -242,8 +245,21 @@ public:
   }
 };
 
-Command &&Command::arg(string arg) {
-  impl_->set_args(arg);
+Command::Command(const string &app) : impl_(std::make_unique<Impl>()) {
+  if (!app.empty())
+    impl_->set_app(app);
+};
+Command::~Command(){};
+Command::Command(Command &&other) { *this = std::move(other); }
+Command &Command::operator=(Command &&other) {
+  if (this != &other) {
+    this->impl_ = std::move(other.impl_);
+  }
+  return *this;
+}
+
+Command &&Command::arg(const string &arg) {
+  impl_->add_args(arg);
   return std::move(*this);
 }
 Command &&Command::std_out(Stdio io) {
