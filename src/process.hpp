@@ -131,6 +131,10 @@ public:
   Command &&args(const std::vector<std::string> &arg);
   Command &&std_out(Stdio io);
   Command &&std_err(Stdio io);
+  Command &&current_dir(const std::string &path);
+  Command &&env(const std::string &key, const std::string &value);
+  Command &&env_clear();
+  ExitStatus status();
   Output output();
   Child spawn();
 

@@ -6,7 +6,22 @@
 int main(int argc, char *argv[]) {
   try {
     {
-      auto output = process::Command().arg(argv[1]).output();
+      auto status = process::Command()
+                        .arg(argv[1])
+                        // .current_dir(R"(C:\AMD)")
+                        // .env("set", "2")
+                        .status();
+      std::cout << std::boolalpha << status.success() << std::endl;
+      std::cout << *status.code() << std::endl;
+    }
+    {
+      auto output = process::Command()
+                        .arg(argv[1])
+                        // .current_dir(R"(C:\AMD)")
+                        .env("ver", "1")
+                        .env("PATH", "")
+                        // .env("set", "2")
+                        .output();
       std::cout << std::boolalpha << output.status.success() << std::endl;
       std::cout << std::quoted(output.std_out) << std::endl;
       std::cout << std::quoted(output.std_err) << std::endl;

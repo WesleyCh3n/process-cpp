@@ -2,7 +2,6 @@
 #include <windows.h>
 
 #include <filesystem>
-#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <vector>
@@ -134,7 +133,8 @@ Stdio Stdio::null() { return Stdio(Value::Null); }
 /*============================================================================*/
 DWORD read_handle(HANDLE handle, char buffer[], size_t size) {
   DWORD bytes_read;
-  if (ReadFile(handle, buffer, size - 1, &bytes_read, NULL) > 0) {
+  if (ReadFile(handle, buffer, static_cast<DWORD>(size - 1), &bytes_read,
+               NULL) > 0) {
     buffer[bytes_read] = '\0';
     return bytes_read;
   }
@@ -254,11 +254,15 @@ class Command::Impl {
   Stdio io_stdin;
   Stdio io_stdout;
   Stdio io_stderr;
+  optional<string> cwd;
+  bool inherit_env;
+  vector<pair<string, string>> envs;
 
 public:
   Impl()
       : app(string()), args(vector<string>()), io_stdin(Stdio::inherit()),
-        io_stdout(Stdio::inherit()), io_stderr(Stdio::inherit()) {
+        io_stdout(Stdio::inherit()), io_stderr(Stdio::inherit()),
+        inherit_env(true) {
     char path[MAX_PATH];
     UINT size = 0;
     if ((size = GetSystemDirectory(path, MAX_PATH)) == 0)
@@ -271,8 +275,17 @@ public:
   void set_stdin(Stdio io) { io_stdin = std::move(io); }
   void set_stdout(Stdio io) { io_stdout = std::move(io); }
   void set_stderr(Stdio io) { io_stderr = std::move(io); }
+  void set_cwd(const string &path) {
+    if (!std::filesystem::exists(path))
+      throw std::runtime_error(std::format("{} not exist", path));
+    cwd = path;
+  }
+  void clear_env() { inherit_env = false; }
 
-  Child spawn() {
+  void add_env(const string &key, const string &val) {
+    envs.push_back({key, val});
+  }
+  string build_arg() {
     string arg;
     if (!args.empty()) {
       arg += args[0];
@@ -280,6 +293,31 @@ public:
         arg += " " + args[i];
       }
     }
+    return arg;
+  }
+  string build_env() {
+    if (inherit_env) { // find add and update
+      for (auto &[k, v] : envs) {
+        if (not SetEnvironmentVariable(k.c_str(), v.c_str())) {
+          throw std::runtime_error(
+              std::format("failed to set environment variable [{}: {}]", k, v));
+        }
+      }
+      return string();
+    }
+    // not inherit build from scratch
+    string result;
+    if (!envs.empty()) {
+      for (auto &[k, v] : envs) {
+        result += std::format("{}={}", k, v);
+        result.push_back('\0');
+      }
+      result.push_back('\0');
+    }
+    return result;
+  }
+
+  Child spawn() {
     auto [our_stdin, their_stdin] = io_stdin.impl_->to_handles(0);
     auto [our_stdout, their_stdout] = io_stdout.impl_->to_handles(1);
     auto [our_stderr, their_stderr] = io_stderr.impl_->to_handles(2);
@@ -290,8 +328,21 @@ public:
     si.hStdOutput = their_stdout;
     si.hStdError = their_stderr;
     si.dwFlags |= STARTF_USESTDHANDLES;
-    if (!CreateProcess(app.c_str(), const_cast<char *>(arg.c_str()), nullptr,
-                       nullptr, TRUE, 0, nullptr, nullptr, &si, &pi)) {
+    string args = build_arg();
+    string envs = build_env();
+    if (!CreateProcess(
+            app.c_str(),                      // Application name
+            const_cast<char *>(args.c_str()), // Command line
+            nullptr,                          // process handle not inheritable
+            nullptr,                          // thread handle not inheritable
+            TRUE, // inheritable handle in the calling process is
+                  // inherited by the new process
+            0,    // control the priority class and the creation of the process
+            (envs.empty() ? nullptr : (LPVOID)envs.c_str()), // env string
+            (cwd.has_value() ? cwd->c_str() : nullptr), // current directory
+            &si,                                        //
+            &pi)                                        //
+    ) {
       throw std::runtime_error("Failed to create process");
     }
     if (their_stdin != GetStdHandle(STD_INPUT_HANDLE)) {
@@ -352,7 +403,26 @@ Command &&Command::std_err(Stdio io) {
   impl_->set_stderr(std::move(io));
   return std::move(*this);
 }
+Command &&Command::current_dir(const std::string &path) {
+  impl_->set_cwd(path);
+  return std::move(*this);
+}
+Command &&Command::env(const string &key, const string &value) {
+  impl_->add_env(key, value);
+  return std::move(*this);
+}
+Command &&Command::env_clear() {
+  impl_->clear_env();
+  return std::move(*this);
+}
 Child Command::spawn() { return impl_->spawn(); }
+ExitStatus Command::status() {
+  impl_->set_stdout(Stdio::inherit());
+  impl_->set_stderr(Stdio::inherit());
+  Child child = impl_->spawn();
+  return child.wait();
+}
+
 Output Command::output() {
   impl_->set_stdout(Stdio::pipe());
   impl_->set_stderr(Stdio::pipe());
