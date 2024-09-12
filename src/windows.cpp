@@ -2,6 +2,7 @@
 #include <windows.h>
 
 #include <filesystem>
+#include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <vector>
@@ -93,7 +94,7 @@ struct Stdio::Impl {
     switch (value) {
     case Value::Inherit: {
       if (id == 0)
-        return {nullptr, GetStdHandle(STD_INPUT_HANDLE)};
+        return {GetStdHandle(STD_INPUT_HANDLE), nullptr};
       else if (id == 1)
         return {nullptr, GetStdHandle(STD_OUTPUT_HANDLE)};
       else if (id == 2)
@@ -133,6 +134,8 @@ Stdio Stdio::null() { return Stdio(Value::Null); }
 /*============================================================================*/
 DWORD read_handle(HANDLE handle, char buffer[], size_t size) {
   DWORD bytes_read;
+  // DWORD aval, left;
+  // if (PeekNamedPipe(handle, buffer, size, &bytes_read, &aval, &left)) {
   if (ReadFile(handle, buffer, static_cast<DWORD>(size - 1), &bytes_read,
                NULL) > 0) {
     buffer[bytes_read] = '\0';
@@ -270,7 +273,13 @@ public:
     app = (std::filesystem::path(string(path, size)) / "cmd.exe").string();
   }
   ~Impl() = default;
-  void set_app(string str) { app = str; }
+  void set_app(string str) {
+    std::filesystem::path name(str);
+    if (name.extension() != ".exe") {
+      name.replace_extension(".exe");
+    }
+    app = find_exe_path(name.string());
+  }
   void add_args(const string &arg) { args.push_back(arg); }
   void set_stdin(Stdio io) { io_stdin = std::move(io); }
   void set_stdout(Stdio io) { io_stdout = std::move(io); }
@@ -281,9 +290,16 @@ public:
     cwd = path;
   }
   void clear_env() { inherit_env = false; }
-
   void add_env(const string &key, const string &val) {
     envs.push_back({key, val});
+  }
+
+  std::string find_exe_path(const std::string &name) {
+    char path[MAX_PATH];
+    if (SearchPath(nullptr, name.c_str(), NULL, MAX_PATH, path, NULL) == 0) {
+      throw std::runtime_error(std::format("executable not found: {}", name));
+    }
+    return std::string(path);
   }
   string build_arg() {
     string arg;
@@ -424,6 +440,7 @@ ExitStatus Command::status() {
 }
 
 Output Command::output() {
+  impl_->set_stdin(Stdio::inherit());
   impl_->set_stdout(Stdio::pipe());
   impl_->set_stderr(Stdio::pipe());
   Child child = impl_->spawn();

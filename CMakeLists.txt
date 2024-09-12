@@ -35,3 +35,5 @@ add_executable(main
 target_link_libraries(main
   std-process
 )
+
+add_subdirectory(test)
