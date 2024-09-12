@@ -1,9 +1,10 @@
 #ifndef _WIN32
 #include "process.hpp"
 
-#include <iostream>
 #include <optional>
 #include <unistd.h>
+
+extern char **environ;
 
 namespace process {
 using std::optional;
@@ -59,17 +60,25 @@ struct Stdio::Impl {
   Value value;
   Impl(Value v) : value(v) {}
   // me, child
-  pair<optional<int>, optional<int>> to_fds(bool is_stdin = false) {
+  pair<optional<int>, optional<int>>
+  to_fds(uint8_t id) { //{0: in, 1: out, 2: err}
     switch (value) {
-    case Value::Inherit:
-      return {std::nullopt, std::nullopt};
+    case Value::Inherit: {
+      if (id == 0)
+        return {STDIN_FILENO, std::nullopt};
+      else if (id == 1)
+        return {std::nullopt, STDOUT_FILENO};
+      else if (id == 2)
+        return {std::nullopt, STDERR_FILENO};
+      else
+        throw std::runtime_error("invalid handle id");
+    }
     case Value::NewPipe:
       int fds[2];
       if (::pipe(fds) == -1)
         throw std::runtime_error("Failed to create pipe");
-
-      return is_stdin ? std::make_pair(fds[0], fds[1])
-                      : std::make_pair(fds[0], fds[1]);
+      return id == 0 ? std::make_pair(fds[1], fds[0])
+                     : std::make_pair(fds[0], fds[1]);
     case Value::FromPipe:
       return {std::nullopt, std::nullopt};
     case Value::Null:
@@ -207,58 +216,96 @@ class Command::Impl {
   Stdio io_stdin;
   Stdio io_stdout;
   Stdio io_stderr;
+  optional<string> cwd;
+  bool inherit_env;
+  vector<pair<string, string>> envs;
 
 public:
   Impl()
-      : app(string()), args(vector<string>()), io_stdin(Stdio::inherit()),
-        io_stdout(Stdio::inherit()), io_stderr(Stdio::inherit()) {}
+      : app("sh"), args(vector<string>()), io_stdin(Stdio::inherit()),
+        io_stdout(Stdio::inherit()), io_stderr(Stdio::inherit()),
+        inherit_env(true) {}
   ~Impl() = default;
   void set_app(string str) { app = str; }
   void add_args(const string &arg) { args.push_back(arg); }
   void set_stdin(Stdio io) { io_stdin = std::move(io); }
   void set_stdout(Stdio io) { io_stdout = std::move(io); }
   void set_stderr(Stdio io) { io_stderr = std::move(io); }
-  Child spawn() {
-    string arg;
+
+  vector<char *> build_args() {
+    std::vector<char *> exec_args = {const_cast<char *>(app.c_str())};
     if (!args.empty()) {
-      arg += args[0];
-      for (int i = 1; i < args.size(); i += 1) {
-        arg += " " + args[i];
+      for (const auto &arg : args) {
+        exec_args.push_back(const_cast<char *>(arg.c_str()));
       }
     }
-    auto [our_stdin, their_stdin] = io_stdin.impl_->to_fds(true);
-    auto [our_stdout, their_stdout] = io_stdout.impl_->to_fds();
-    auto [our_stderr, their_stderr] = io_stderr.impl_->to_fds();
+    exec_args.push_back(nullptr); // execvp needs a null-terminated array
+    return exec_args;
+  }
+  void set_cwd(const string &path) {
+    // if (!std::filesystem::exists(path))
+    //   throw std::runtime_error(std::format("{} not exist", path));
+    cwd = path;
+  }
+  void add_env(const string &key, const string &value) {
+    envs.push_back({key, value});
+  };
+  void clear_env() { inherit_env = false; }
+  Child spawn() {
+    auto arguments = build_args();
+    auto [our_stdin, their_stdin] = io_stdin.impl_->to_fds(0);
+    auto [our_stdout, their_stdout] = io_stdout.impl_->to_fds(1);
+    auto [our_stderr, their_stderr] = io_stderr.impl_->to_fds(2);
     pid_t pid = fork();
     if (pid == -1)
       throw std::runtime_error("Failed to fork");
     if (pid == 0) {
-      if (auto fd = their_stdin) {
-        dup2(*fd, STDIN_FILENO);
-        close(*fd);
+      close(*our_stdin);
+      close(*our_stdout);
+      close(*our_stderr);
+      if (their_stdin.has_value() && their_stdin != STDIN_FILENO) {
+        dup2(*their_stdin, STDIN_FILENO);
+        close(*their_stdin);
       }
-      if (auto fd = their_stdout) {
-        dup2(*fd, STDOUT_FILENO);
-        close(*fd);
+      if (their_stdout.has_value() && their_stdout != STDOUT_FILENO) {
+        dup2(*their_stdout, STDOUT_FILENO);
+        close(*their_stdout);
       }
-      if (auto fd = their_stderr) {
-        dup2(*fd, STDERR_FILENO);
-        close(*fd);
+      if (their_stderr.has_value() && their_stderr != STDERR_FILENO) {
+        dup2(*their_stderr, STDERR_FILENO);
+        close(*their_stderr);
       }
-      if (app.empty())
-        execl("/bin/sh", "sh", "-c", arg.c_str(), nullptr);
-      else
-        execl(app.c_str(), arg.c_str(), nullptr);
+      if (not inherit_env) {
+        environ = nullptr;
+      }
+      for (const auto &[key, value] : envs) {
+        setenv(key.c_str(), value.c_str(), 1);
+      }
+      if (auto lpath = cwd) {
+        string &path = *lpath;
+        char *home = nullptr;
+        if (path.front() == '~') {
+          if (not(home = getenv("HOME"))) {
+            throw std::runtime_error("HOME environment variable not set");
+          }
+        }
+        if (chdir((home ? string(home) + path.substr(1) : path).c_str()) ==
+            -1) {
+          throw std::runtime_error("failed to change directory");
+        }
+      }
+      execvp(app.c_str(), arguments.data());
+      throw("execvp failed");
       _exit(EXIT_FAILURE);
     }
-    if (auto fd = their_stdin) {
-      close(*fd);
+    if (their_stdin.has_value() && *their_stdin != STDIN_FILENO) {
+      close(*their_stdin);
     }
-    if (auto fd = their_stdout) {
-      close(*fd);
+    if (their_stdout.has_value() && *their_stdout != STDOUT_FILENO) {
+      close(*their_stdout);
     }
-    if (auto fd = their_stderr) {
-      close(*fd);
+    if (their_stderr.has_value() && *their_stderr != STDERR_FILENO) {
+      close(*their_stderr);
     }
 
     Child s;
@@ -305,9 +352,29 @@ Command &&Command::std_err(Stdio io) {
   impl_->set_stderr(std::move(io));
   return std::move(*this);
 }
+Command &&Command::current_dir(const std::string &path) {
+  impl_->set_cwd(path);
+  return std::move(*this);
+}
+Command &&Command::env(const string &key, const string &value) {
+  impl_->add_env(key, value);
+  return std::move(*this);
+}
+Command &&Command::env_clear() {
+  impl_->clear_env();
+  return std::move(*this);
+}
 Child Command::spawn() { return impl_->spawn(); }
+ExitStatus Command::status() {
+  impl_->set_stdin(Stdio::inherit());
+  impl_->set_stdout(Stdio::inherit());
+  impl_->set_stderr(Stdio::inherit());
+  Child child = impl_->spawn();
+  return child.wait();
+}
 
 Output Command::output() {
+  impl_->set_stdin(Stdio::inherit());
   impl_->set_stdout(Stdio::pipe());
   impl_->set_stderr(Stdio::pipe());
   Child child = impl_->spawn();
