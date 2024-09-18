@@ -29,8 +29,8 @@ export(TARGETS std-process
        NAMESPACE std-process::
        FILE ${PROJECT_CONFIG})
 
-add_executable(test
-  test.cpp
+add_executable(getline
+  getline.cpp
 )
 add_executable(hello
   hello.cpp
