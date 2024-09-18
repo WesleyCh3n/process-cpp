@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -20,7 +21,7 @@ public:
   ChildStdin(ChildStdin &&other);
   ChildStdin &operator=(ChildStdin &&other);
 
-  ssize_t write(char buffer[], size_t size);
+  size_t write(std::span<const std::byte> buffer);
 
 private:
   struct Impl;
@@ -36,7 +37,7 @@ public:
   ChildStdout(ChildStdout &&other);
   ChildStdout &operator=(ChildStdout &&other);
 
-  ssize_t read(char buffer[], size_t size);
+  ssize_t read(std::span<std::byte> buffer);
 
 private:
   struct Impl;
@@ -52,7 +53,7 @@ public:
   ChildStderr(ChildStderr &&other);
   ChildStderr &operator=(ChildStderr &&other);
 
-  ssize_t read(char buffer[], size_t size);
+  ssize_t read(std::span<std::byte> buffer);
 
 private:
   struct Impl;

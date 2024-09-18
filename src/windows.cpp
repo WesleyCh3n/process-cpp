@@ -5,6 +5,7 @@
 #include <format>
 #include <iostream>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -14,6 +15,7 @@
 namespace process {
 using std::optional;
 using std::pair;
+using std::span;
 using std::string;
 using std::vector;
 
@@ -32,6 +34,25 @@ inline std::string GetLastErrorAsString() {
   std::string message(messageBuffer, size);
   LocalFree(messageBuffer);
   return message;
+}
+
+DWORD read_handle(HANDLE handle, span<std::byte> buffer) {
+  DWORD bytes_read;
+  if (ReadFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
+               &bytes_read, NULL) > 0) {
+    // buffer[bytes_read] = '\0';
+    return bytes_read;
+  }
+  return 0;
+}
+
+size_t write_handle(HANDLE handle, span<const std::byte> buffer) {
+  DWORD written;
+  if (!WriteFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
+                 &written, nullptr)) {
+    throw std::runtime_error("failed to write file to handle");
+  }
+  return static_cast<size_t>(written);
 }
 
 static pair<HANDLE, HANDLE> spawn_pipe_relay(HANDLE source, bool our_readable,
@@ -124,22 +145,11 @@ bool ExitStatus::success() { return impl_->code == 0; }
 optional<int> ExitStatus::code() { return impl_->code; }
 
 /*============================================================================*/
-DWORD read_handle(HANDLE handle, char buffer[], size_t size) {
-  DWORD bytes_read;
-  if (ReadFile(handle, buffer, static_cast<DWORD>(size - 1), &bytes_read,
-               NULL) > 0) {
-    buffer[bytes_read] = '\0';
-    return bytes_read;
-  }
-  return 0;
-}
-
 struct ChildStdin::Impl {
   HANDLE handle;
   Impl(HANDLE h) : handle(h) {}
-  ssize_t write(char buffer[], size_t size) {
-    throw std::logic_error("unimplemented");
-    return read_handle(this->handle, buffer, size);
+  size_t write(span<const std::byte> buffer) {
+    return write_handle(this->handle, buffer);
   }
 };
 
@@ -153,15 +163,15 @@ ChildStdin &ChildStdin::operator=(ChildStdin &&other) {
   return *this;
 }
 
-ssize_t ChildStdin::write(char buffer[], size_t size) {
-  return impl_->write(buffer, size);
+size_t ChildStdin::write(span<const std::byte> buffer) {
+  return impl_->write(buffer);
 }
 
 struct ChildStdout::Impl {
   HANDLE handle;
   Impl(HANDLE h) : handle(h) {}
-  ssize_t read(char buffer[], size_t size) {
-    return read_handle(this->handle, buffer, size);
+  ssize_t read(span<std::byte> buffer) {
+    return read_handle(this->handle, buffer);
   }
 };
 ChildStdout::ChildStdout() : impl_(nullptr) {}
@@ -174,15 +184,15 @@ ChildStdout &ChildStdout::operator=(ChildStdout &&other) {
   return *this;
 }
 
-ssize_t ChildStdout::read(char buffer[], size_t size) {
-  return impl_->read(buffer, size);
+ssize_t ChildStdout::read(span<std::byte> buffer) {
+  return impl_->read(buffer);
 }
 
 struct ChildStderr::Impl {
   HANDLE handle;
   Impl(HANDLE h) : handle(h) {}
-  ssize_t read(char buffer[], size_t size) {
-    return read_handle(this->handle, buffer, size);
+  ssize_t read(span<std::byte> buffer) {
+    return read_handle(this->handle, buffer);
   }
 };
 ChildStderr::ChildStderr() : impl_(nullptr) {}
@@ -195,8 +205,8 @@ ChildStderr &ChildStderr::operator=(ChildStderr &&other) {
   return *this;
 }
 
-ssize_t ChildStderr::read(char buffer[], size_t size) {
-  return impl_->read(buffer, size);
+ssize_t ChildStderr::read(span<std::byte> buffer) {
+  return impl_->read(buffer);
 }
 
 /*============================================================================*/
@@ -223,9 +233,10 @@ struct Stdio::Impl {
     case Value::NewPipe: {
       HANDLE handle[2]; // read, write
       SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), NULL, TRUE};
-      if (!CreatePipe(&handle[0], &handle[1], &sa, 0) ||
-          !SetHandleInformation(handle[0], HANDLE_FLAG_INHERIT, 0))
-        throw std::runtime_error("Failed to create pipe");
+      if (!CreatePipe(&handle[0], &handle[1], &sa, 0))
+        throw std::runtime_error("failed to create pipe");
+      if (id != 0 && !SetHandleInformation(handle[0], HANDLE_FLAG_INHERIT, 0))
+        throw std::runtime_error("failed set handle information");
       return (id == 0) ? std::make_pair(handle[1], handle[0])
                        : std::make_pair(handle[0], handle[1]);
     }
@@ -294,6 +305,12 @@ struct Child::Impl {
     status.impl_->code = code;
     return status;
   }
+  void kill() {
+    if (not TerminateProcess(pi.pi.hProcess, 1)) {
+      throw std::runtime_error(
+          std::format("failed to terminate process: pid[{}]", id()));
+    }
+  }
 };
 Child::Child() : impl_(nullptr){};
 Child::~Child(){};
@@ -307,16 +324,19 @@ Child &Child::operator=(Child &&other) {
 
 int Child::id() { return impl_->id(); }
 ExitStatus Child::wait() { return impl_->wait(); }
+void Child::kill() { impl_->kill(); }
 Output Child::wait_with_output() {
   Output output;
-  char stdout_buf[2048], stderr_buf[2048];
+  std::byte stdout_buf[2048], stderr_buf[2048];
   ssize_t stdout_size = 0, stderr_size = 0;
-  while (((stdout_size = this->io_stdout->read(stdout_buf, 2048)) > 0) ||
-         ((stderr_size = this->io_stderr->read(stderr_buf, 2048)) > 0)) {
+  while (((stdout_size = this->io_stdout->read(span{stdout_buf})) > 0) ||
+         ((stderr_size = this->io_stderr->read(span{stderr_buf})) > 0)) {
     if (stdout_size > 0)
-      output.std_out += stdout_buf;
+      output.std_out +=
+          string(reinterpret_cast<const char *>(stdout_buf), stdout_size);
     if (stderr_size > 0)
-      output.std_err += stderr_buf;
+      output.std_err +=
+          string(reinterpret_cast<const char *>(stderr_buf), stderr_size);
   }
   output.status = this->wait();
   return output;
