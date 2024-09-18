@@ -2,15 +2,16 @@
 #include <windows.h>
 
 #include <filesystem>
+#include <format>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include "process.hpp"
 
 namespace process {
-using std::atomic_bool;
 using std::optional;
 using std::pair;
 using std::string;
@@ -71,6 +72,8 @@ static pair<HANDLE, HANDLE> spawn_pipe_relay(HANDLE source, bool our_readable,
             total_written += bytes_written;
           }
         }
+        CloseHandle(destination);
+        CloseHandle(source);
       },
       dup_source, writer);
   relay_thread.detach();
@@ -123,8 +126,6 @@ optional<int> ExitStatus::code() { return impl_->code; }
 /*============================================================================*/
 DWORD read_handle(HANDLE handle, char buffer[], size_t size) {
   DWORD bytes_read;
-  // DWORD aval, left;
-  // if (PeekNamedPipe(handle, buffer, size, &bytes_read, &aval, &left)) {
   if (ReadFile(handle, buffer, static_cast<DWORD>(size - 1), &bytes_read,
                NULL) > 0) {
     buffer[bytes_read] = '\0';
