@@ -13,24 +13,6 @@ typedef SSIZE_T ssize_t;
 namespace process {
 using std::unique_ptr;
 
-class Stdio {
-public:
-  ~Stdio();
-  Stdio(Stdio &&other);
-  Stdio &operator=(Stdio &&other);
-
-  enum class Value { Inherit, NewPipe, FromPipe, Null };
-  static Stdio pipe();
-  static Stdio inherit();
-  static Stdio null();
-
-private:
-  Stdio(Value value);
-  struct Impl;
-  std::unique_ptr<Impl> impl_;
-  friend class Command;
-};
-
 class ChildStdin {
 public:
   ChildStdin();
@@ -44,6 +26,7 @@ private:
   struct Impl;
   unique_ptr<Impl> impl_;
   friend class Command;
+  friend class Stdio;
 };
 
 class ChildStdout {
@@ -59,6 +42,7 @@ private:
   struct Impl;
   unique_ptr<Impl> impl_;
   friend class Command;
+  friend class Stdio;
 };
 
 class ChildStderr {
@@ -74,6 +58,7 @@ private:
   struct Impl;
   unique_ptr<Impl> impl_;
   friend class Command;
+  friend class Stdio;
 };
 
 class ExitStatus {
@@ -95,6 +80,27 @@ struct Output {
   ExitStatus status;
   std::string std_out;
   std::string std_err;
+};
+
+class Stdio {
+public:
+  ~Stdio();
+  Stdio(Stdio &&other);
+  Stdio &operator=(Stdio &&other);
+
+  enum class Value { Inherit, NewPipe, FromPipe, Null };
+  static Stdio pipe();
+  static Stdio inherit();
+  static Stdio null();
+  static Stdio from(ChildStdin);
+  static Stdio from(ChildStdout);
+  static Stdio from(ChildStderr);
+
+private:
+  Stdio(Value value);
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
+  friend class Command;
 };
 
 class Child {
@@ -129,6 +135,7 @@ public:
 
   Command &&arg(const std::string &arg);
   Command &&args(const std::vector<std::string> &arg);
+  Command &&std_in(Stdio io);
   Command &&std_out(Stdio io);
   Command &&std_err(Stdio io);
   Command &&current_dir(const std::string &path);

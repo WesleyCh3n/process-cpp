@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.10)
 
 project(std-process)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 
 add_library(std-process
   src/unix.cpp
@@ -29,6 +29,12 @@ export(TARGETS std-process
        NAMESPACE std-process::
        FILE ${PROJECT_CONFIG})
 
+add_executable(test
+  test.cpp
+)
+add_executable(hello
+  hello.cpp
+)
 add_executable(main
   main.cpp
 )

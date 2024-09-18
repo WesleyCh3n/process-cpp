@@ -33,6 +33,50 @@ inline std::string GetLastErrorAsString() {
   return message;
 }
 
+static pair<HANDLE, HANDLE> spawn_pipe_relay(HANDLE source, bool our_readable,
+                                             bool their_handle_inheritable) {
+  HANDLE dup_source;
+  if (!DuplicateHandle(GetCurrentProcess(), source, GetCurrentProcess(),
+                       &dup_source, 0, TRUE, DUPLICATE_SAME_ACCESS)) {
+    throw std::runtime_error("failed to duplicate relay handle");
+  }
+  HANDLE reader, writer; // read, write
+  SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), NULL, TRUE};
+  if (!CreatePipe(&reader, &writer, &sa, 0))
+    throw std::runtime_error("Failed to create pipe");
+
+  std::thread relay_thread(
+      [](HANDLE source, HANDLE destination) {
+        char buffer[4096];
+        DWORD bytes_read = 0;
+        DWORD bytes_written = 0;
+
+        while (true) {
+          // Read from source pipe
+          if (!ReadFile(source, buffer, 4096, &bytes_read, nullptr)) {
+            break; // Exit on error or EOF
+          }
+
+          if (bytes_read == 0) {
+            break; // EOF, exit the loop
+          }
+
+          DWORD total_written = 0;
+          while (total_written < bytes_read) {
+            if (!WriteFile(destination, buffer + total_written,
+                           bytes_read - total_written, &bytes_written,
+                           nullptr)) {
+              break; // Exit on error
+            }
+            total_written += bytes_written;
+          }
+        }
+      },
+      dup_source, writer);
+  relay_thread.detach();
+  return std::make_pair(nullptr, reader);
+}
+
 /*============================================================================*/
 struct Process {
   PROCESS_INFORMATION pi;
@@ -77,19 +121,92 @@ bool ExitStatus::success() { return impl_->code == 0; }
 optional<int> ExitStatus::code() { return impl_->code; }
 
 /*============================================================================*/
-Stdio::Stdio(Value v) : impl_(std::make_unique<Impl>(v)) {}
-Stdio::~Stdio() = default;
-Stdio::Stdio(Stdio &&other) { *this = std::move(other); };
-Stdio &Stdio::operator=(Stdio &&other) {
-  if (&other != this)
-    this->impl_ = std::move(other.impl_);
+DWORD read_handle(HANDLE handle, char buffer[], size_t size) {
+  DWORD bytes_read;
+  // DWORD aval, left;
+  // if (PeekNamedPipe(handle, buffer, size, &bytes_read, &aval, &left)) {
+  if (ReadFile(handle, buffer, static_cast<DWORD>(size - 1), &bytes_read,
+               NULL) > 0) {
+    buffer[bytes_read] = '\0';
+    return bytes_read;
+  }
+  return 0;
+}
 
+struct ChildStdin::Impl {
+  HANDLE handle;
+  Impl(HANDLE h) : handle(h) {}
+  ssize_t write(char buffer[], size_t size) {
+    throw std::logic_error("unimplemented");
+    return read_handle(this->handle, buffer, size);
+  }
+};
+
+ChildStdin::ChildStdin() : impl_(nullptr) {}
+ChildStdin::~ChildStdin() {}
+ChildStdin::ChildStdin(ChildStdin &&other) { *this = std::move(other); }
+ChildStdin &ChildStdin::operator=(ChildStdin &&other) {
+  if (this != &other) {
+    this->impl_ = std::move(other.impl_);
+  }
   return *this;
 }
 
+ssize_t ChildStdin::write(char buffer[], size_t size) {
+  return impl_->write(buffer, size);
+}
+
+struct ChildStdout::Impl {
+  HANDLE handle;
+  Impl(HANDLE h) : handle(h) {}
+  ssize_t read(char buffer[], size_t size) {
+    return read_handle(this->handle, buffer, size);
+  }
+};
+ChildStdout::ChildStdout() : impl_(nullptr) {}
+ChildStdout::~ChildStdout() {}
+ChildStdout::ChildStdout(ChildStdout &&other) { *this = std::move(other); }
+ChildStdout &ChildStdout::operator=(ChildStdout &&other) {
+  if (this != &other) {
+    this->impl_ = std::move(other.impl_);
+  }
+  return *this;
+}
+
+ssize_t ChildStdout::read(char buffer[], size_t size) {
+  return impl_->read(buffer, size);
+}
+
+struct ChildStderr::Impl {
+  HANDLE handle;
+  Impl(HANDLE h) : handle(h) {}
+  ssize_t read(char buffer[], size_t size) {
+    return read_handle(this->handle, buffer, size);
+  }
+};
+ChildStderr::ChildStderr() : impl_(nullptr) {}
+ChildStderr::~ChildStderr() {}
+ChildStderr::ChildStderr(ChildStderr &&other) { *this = std::move(other); }
+ChildStderr &ChildStderr::operator=(ChildStderr &&other) {
+  if (this != &other) {
+    this->impl_ = std::move(other.impl_);
+  }
+  return *this;
+}
+
+ssize_t ChildStderr::read(char buffer[], size_t size) {
+  return impl_->read(buffer, size);
+}
+
+/*============================================================================*/
 struct Stdio::Impl {
   Value value;
-  Impl(Value v) : value(v) {}
+  Impl(Value v) : value(v), other(nullptr) {}
+  HANDLE other;
+  //        parent, handle
+  // stdin: write, read
+  // stdout: read, write
+  // stderr: read, write
   pair<HANDLE, HANDLE> to_handles(uint8_t id) { //{0: in, 1: out, 2: err}
     switch (value) {
     case Value::Inherit: {
@@ -100,10 +217,10 @@ struct Stdio::Impl {
       else if (id == 2)
         return {nullptr, GetStdHandle(STD_ERROR_HANDLE)};
       else
-        throw std::runtime_error("invaled handle id");
+        throw std::runtime_error("invalid handle id");
     }
     case Value::NewPipe: {
-      HANDLE handle[2];
+      HANDLE handle[2]; // read, write
       SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), NULL, TRUE};
       if (!CreatePipe(&handle[0], &handle[1], &sa, 0) ||
           !SetHandleInformation(handle[0], HANDLE_FLAG_INHERIT, 0))
@@ -112,7 +229,14 @@ struct Stdio::Impl {
                        : std::make_pair(handle[0], handle[1]);
     }
     case Value::FromPipe: {
-      throw std::logic_error("unimplemented");
+      if (id == 0)
+        return spawn_pipe_relay(other, true, true);
+      else if (id == 1)
+        return {nullptr, nullptr};
+      else if (id == 2)
+        return {nullptr, nullptr};
+      else
+        throw std::runtime_error("invalid handle id");
       return {nullptr, nullptr};
     }
     case Value::Null: {
@@ -127,99 +251,36 @@ struct Stdio::Impl {
   }
 };
 
+Stdio::Stdio(Value v) : impl_(std::make_unique<Impl>(v)) {}
+Stdio::~Stdio() = default;
+Stdio::Stdio(Stdio &&other) { *this = std::move(other); };
+Stdio &Stdio::operator=(Stdio &&other) {
+  if (&other != this)
+    this->impl_ = std::move(other.impl_);
+
+  return *this;
+}
+
 Stdio Stdio::pipe() { return Stdio(Value::NewPipe); }
 Stdio Stdio::inherit() { return Stdio(Value::Inherit); }
 Stdio Stdio::null() { return Stdio(Value::Null); }
-
-/*============================================================================*/
-DWORD read_handle(HANDLE handle, char buffer[], size_t size) {
-  DWORD bytes_read;
-  // DWORD aval, left;
-  // if (PeekNamedPipe(handle, buffer, size, &bytes_read, &aval, &left)) {
-  if (ReadFile(handle, buffer, static_cast<DWORD>(size - 1), &bytes_read,
-               NULL) > 0) {
-    buffer[bytes_read] = '\0';
-    return bytes_read;
-  }
-  return 0;
+Stdio Stdio::from(ChildStdin other) {
+  Stdio io = Stdio(Value::FromPipe);
+  io.impl_->other = other.impl_->handle;
+  return io;
 }
-
-ChildStdin::ChildStdin() : impl_(nullptr) {}
-ChildStdin::~ChildStdin() {}
-ChildStdin::ChildStdin(ChildStdin &&other) { *this = std::move(other); }
-ChildStdin &ChildStdin::operator=(ChildStdin &&other) {
-  if (this != &other) {
-    this->impl_ = std::move(other.impl_);
-  }
-  return *this;
+Stdio Stdio::from(ChildStdout other) {
+  Stdio io = Stdio(Value::FromPipe);
+  io.impl_->other = other.impl_->handle;
+  return io;
 }
-
-struct ChildStdin::Impl {
-  HANDLE handle;
-  Impl(HANDLE h) : handle(h) {}
-  ssize_t write(char buffer[], size_t size) {
-    throw std::logic_error("unimplemented");
-    return read_handle(this->handle, buffer, size);
-  }
-};
-
-ssize_t ChildStdin::write(char buffer[], size_t size) {
-  return impl_->write(buffer, size);
-}
-
-ChildStdout::ChildStdout() : impl_(nullptr) {}
-ChildStdout::~ChildStdout() {}
-ChildStdout::ChildStdout(ChildStdout &&other) { *this = std::move(other); }
-ChildStdout &ChildStdout::operator=(ChildStdout &&other) {
-  if (this != &other) {
-    this->impl_ = std::move(other.impl_);
-  }
-  return *this;
-}
-
-struct ChildStdout::Impl {
-  HANDLE handle;
-  Impl(HANDLE h) : handle(h) {}
-  ssize_t read(char buffer[], size_t size) {
-    return read_handle(this->handle, buffer, size);
-  }
-};
-ssize_t ChildStdout::read(char buffer[], size_t size) {
-  return impl_->read(buffer, size);
-}
-
-ChildStderr::ChildStderr() : impl_(nullptr) {}
-ChildStderr::~ChildStderr() {}
-ChildStderr::ChildStderr(ChildStderr &&other) { *this = std::move(other); }
-ChildStderr &ChildStderr::operator=(ChildStderr &&other) {
-  if (this != &other) {
-    this->impl_ = std::move(other.impl_);
-  }
-  return *this;
-}
-
-struct ChildStderr::Impl {
-  HANDLE handle;
-  Impl(HANDLE h) : handle(h) {}
-  ssize_t read(char buffer[], size_t size) {
-    return read_handle(this->handle, buffer, size);
-  }
-};
-ssize_t ChildStderr::read(char buffer[], size_t size) {
-  return impl_->read(buffer, size);
+Stdio Stdio::from(ChildStderr other) {
+  Stdio io = Stdio(Value::FromPipe);
+  io.impl_->other = other.impl_->handle;
+  return io;
 }
 
 /*============================================================================*/
-Child::Child() : impl_(nullptr){};
-Child::~Child(){};
-Child::Child(Child &&other) { *this = std::move(other); };
-Child &Child::operator=(Child &&other) {
-  if (&other != this) {
-    this->impl_ = std::move(other.impl_);
-  }
-  return *this;
-}
-
 struct Child::Impl {
   Process pi;
 
@@ -233,6 +294,16 @@ struct Child::Impl {
     return status;
   }
 };
+Child::Child() : impl_(nullptr){};
+Child::~Child(){};
+Child::Child(Child &&other) { *this = std::move(other); };
+Child &Child::operator=(Child &&other) {
+  if (&other != this) {
+    this->impl_ = std::move(other.impl_);
+  }
+  return *this;
+}
+
 int Child::id() { return impl_->id(); }
 ExitStatus Child::wait() { return impl_->wait(); }
 Output Child::wait_with_output() {
@@ -334,9 +405,9 @@ public:
   }
 
   Child spawn() {
-    auto [our_stdin, their_stdin] = io_stdin.impl_->to_handles(0);
-    auto [our_stdout, their_stdout] = io_stdout.impl_->to_handles(1);
-    auto [our_stderr, their_stderr] = io_stderr.impl_->to_handles(2);
+    auto [our_stdin, their_stdin] = io_stdin.impl_->to_handles(0);    // w, r
+    auto [our_stdout, their_stdout] = io_stdout.impl_->to_handles(1); // r, w
+    auto [our_stderr, their_stderr] = io_stderr.impl_->to_handles(2); // r, w
     PROCESS_INFORMATION pi = {0};
     STARTUPINFO si = {0};
     si.cb = sizeof(STARTUPINFO);
@@ -364,11 +435,11 @@ public:
     if (their_stdin != GetStdHandle(STD_INPUT_HANDLE)) {
       CloseHandle(their_stdin);
     }
-    if (their_stderr != GetStdHandle(STD_ERROR_HANDLE)) {
-      CloseHandle(their_stderr);
-    }
     if (their_stdout != GetStdHandle(STD_OUTPUT_HANDLE)) {
       CloseHandle(their_stdout);
+    }
+    if (their_stderr != GetStdHandle(STD_ERROR_HANDLE)) {
+      CloseHandle(their_stderr);
     }
     Child s;
     if (our_stdin != nullptr) {
@@ -411,6 +482,10 @@ Command &&Command::args(const vector<string> &args) {
     impl_->add_args(arg);
   return std::move(*this);
 }
+Command &&Command::std_in(Stdio io) {
+  impl_->set_stdin(std::move(io));
+  return std::move(*this);
+}
 Command &&Command::std_out(Stdio io) {
   impl_->set_stdout(std::move(io));
   return std::move(*this);
@@ -433,6 +508,7 @@ Command &&Command::env_clear() {
 }
 Child Command::spawn() { return impl_->spawn(); }
 ExitStatus Command::status() {
+  // impl_->set_stdin(Stdio::inherit());
   impl_->set_stdout(Stdio::inherit());
   impl_->set_stderr(Stdio::inherit());
   Child child = impl_->spawn();
@@ -440,7 +516,7 @@ ExitStatus Command::status() {
 }
 
 Output Command::output() {
-  impl_->set_stdin(Stdio::inherit());
+  // impl_->set_stdin(Stdio::inherit());
   impl_->set_stdout(Stdio::pipe());
   impl_->set_stderr(Stdio::pipe());
   Child child = impl_->spawn();
