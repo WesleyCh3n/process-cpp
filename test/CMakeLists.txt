@@ -11,11 +11,14 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
+add_executable(mock "${CMAKE_CURRENT_SOURCE_DIR}/mock.cpp")
+
 enable_testing()
 
 include(GoogleTest)
 
 file(GLOB files "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+list(REMOVE_ITEM files "${CMAKE_CURRENT_SOURCE_DIR}/mock.cpp")
 foreach(file ${files})
   # Get the filename without extension
   get_filename_component(name ${file} NAME_WE)

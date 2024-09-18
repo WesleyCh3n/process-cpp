@@ -20,7 +20,7 @@ TEST(StatusTest, CommandSuccess) {
 #endif
 }
 
-TEST(CmdTest, ExistCode) {
+TEST(CmdTest, ExitCode) {
 #ifdef _WIN32
   // EXPECT_THROW(Command("cmda").arg("/c").arg("echo hello"),
   // std::runtime_error);
