@@ -1,7 +1,5 @@
 #include "src/process.hpp"
 
-#include <windows.h>
-
 #include <iomanip>
 #include <iostream>
 
@@ -11,15 +9,14 @@ int main(int argc, char *argv[]) {
   try {
     using namespace process;
     {
-      auto child = Command(R"(.\build\Debug\test.exe)").spawn();
+      auto child = Command("./build/getline").spawn();
       std::cout << "pid: " << child.id() << '\n';
       child.kill();
       std::cout << "kill success\n";
     }
     std::cout << std::string(80, '=') << std::endl;
     {
-      auto child =
-          Command(R"(.\build\Debug\test.exe)").std_in(Stdio::pipe()).spawn();
+      auto child = Command("./build/getline").std_in(Stdio::pipe()).spawn();
       vector<string> strs{"hello\n", "from\n", "parent\n"};
       for (auto &str : strs) {
         child.io_stdin->write(std::as_bytes(std::span{str}));
@@ -28,23 +25,26 @@ int main(int argc, char *argv[]) {
     }
     std::cout << std::string(80, '=') << std::endl;
     {
-      auto child = Command("cmd")
-                       .arg("/c")
-                       .arg(R"(ping 127.0.0.1)")
-                       .std_out(Stdio::pipe())
-                       .spawn();
-      auto output = Command(R"(.\build\Debug\test.exe)")
-                        .std_in(Stdio::from(std::move(*child.io_stdout)))
-                        .output();
-      cout << *output.status.code() << '\n';
+      auto output = Command("echo").arg("hello").output();
+      cout << "exit code: " << *output.status.code() << '\n';
       cout << "out: " << output.std_out << '\n';
       cout << "err: " << output.std_err << '\n';
     }
     std::cout << std::string(80, '=') << std::endl;
     {
-      auto child = process::Command()
-                       .arg("/c")
-                       .arg("dir")
+      auto child =
+          Command("cat").arg("main.cpp").std_out(Stdio::pipe()).spawn();
+      auto output = Command("grep")
+                        .arg("./build/getline")
+                        .std_in(Stdio::from(std::move(*child.io_stdout)))
+                        .output();
+      cout << "exit code: " << *output.status.code() << '\n';
+      cout << "out: " << output.std_out << '\n';
+      cout << "err: " << output.std_err << '\n';
+    }
+    std::cout << std::string(80, '=') << std::endl;
+    {
+      auto child = process::Command("ls")
                        .std_out(process::Stdio::pipe())
                        .std_err(process::Stdio::pipe())
                        .spawn();

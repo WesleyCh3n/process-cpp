@@ -235,6 +235,7 @@ int Child::id() { return impl_->id(); }
 ExitStatus Child::wait() { return impl_->wait(); }
 void Child::kill() { impl_->kill(); }
 Output Child::wait_with_output() {
+  // TODO: switch stdout, stderr case
   Output output;
   std::byte stdout_buf[2048], stderr_buf[2048];
   ssize_t stdout_size = 0, stderr_size = 0;
@@ -385,6 +386,12 @@ Command &Command::operator=(Command &&other) {
 
 Command &&Command::arg(const string &arg) {
   impl_->add_args(arg);
+  return std::move(*this);
+}
+Command &&Command::args(const std::vector<std::string> &args) {
+  for (const auto &arg : args) {
+    impl_->add_args(arg);
+  }
   return std::move(*this);
 }
 Command &&Command::std_in(Stdio io) {

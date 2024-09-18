@@ -135,7 +135,7 @@ public:
   Command &operator=(Command &&other); // move assignment
 
   Command &&arg(const std::string &arg);
-  Command &&args(const std::vector<std::string> &arg);
+  Command &&args(const std::vector<std::string> &args);
   Command &&std_in(Stdio io);
   Command &&std_out(Stdio io);
   Command &&std_err(Stdio io);

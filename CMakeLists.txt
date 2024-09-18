@@ -42,4 +42,5 @@ target_link_libraries(main
   std-process
 )
 
+add_subdirectory(example)
 add_subdirectory(test)
