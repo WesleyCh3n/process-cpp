@@ -19,10 +19,9 @@ TEST(PipeTest, ProcessStdoutToProcessStdin) {
   Args args = {"-c", "echo hello world"};
 #endif
 
-  // FIX windos args insert first
-  Args args = {bin, "out", "hello", "from", "out"};
+  Args args = {"out", "hello", "from", "out"};
   Child child = Command(bin).args(args).std_out(Stdio::pipe()).spawn();
-  args = {bin, "in", "3"};
+  args = {"in", "3"};
   Child child2 = Command(bin)
                      .args(args)
                      .std_in(Stdio::from(std::move(*child.io_stdout)))

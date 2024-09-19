@@ -407,10 +407,9 @@ public:
     return std::string(path);
   }
   string build_arg() {
-    string arg;
+    string arg(this->app);
     if (!args.empty()) {
-      arg += args[0];
-      for (int i = 1; i < args.size(); i += 1) {
+      for (int i = 0; i < args.size(); i += 1) {
         arg += " " + args[i];
       }
     }

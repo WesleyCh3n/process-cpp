@@ -14,7 +14,7 @@ TEST(OutputTest, Stdout) {
 #else
   string bin = R"(Release\mock.exe)";
 #endif
-  Args args = {bin, "010", "\"hello from mock\""};
+  Args args = {"010", "\"hello from mock\""};
 #else
   string bin = "sh";
   Args args = {"-c", "echo hello world"};
@@ -34,7 +34,7 @@ TEST(OutputTest, Stderr) {
 #else
   string bin = R"(Release\mock.exe)";
 #endif
-  Args args = {bin, "100", "\"hello from mock\""};
+  Args args = {"100", "\"hello from mock\""};
 #else
   string bin = "sh";
   Args args = {"-c", "echo hello world"};
@@ -54,7 +54,7 @@ TEST(OutputTest, StdoutStderr) {
 #else
   string bin = R"(Release\mock.exe)";
 #endif
-  Args args = {bin, "110", "\"stdout from mock\"", "\"stderr from mock\""};
+  Args args = {"110", "\"stdout from mock\"", "\"stderr from mock\""};
 #else
   string bin = "sh";
   Args args = {"-c", "echo hello world"};
