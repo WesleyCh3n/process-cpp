@@ -16,8 +16,8 @@ TEST(OutputTest, Stdout) {
 #endif
   Args args = {"010", "\"hello from mock\""};
 #else
-  string bin = "sh";
-  Args args = {"-c", "echo hello world"};
+  string bin = "./mock";
+  Args args = {"010", "hello from mock"};
 #endif
 
   Output output = Command(bin).args(args).output();
@@ -36,8 +36,8 @@ TEST(OutputTest, Stderr) {
 #endif
   Args args = {"100", "\"hello from mock\""};
 #else
-  string bin = "sh";
-  Args args = {"-c", "echo hello world"};
+  string bin = "./mock";
+  Args args = {"100", "hello from mock"};
 #endif
 
   Output output = Command(bin).args(args).output();
@@ -56,8 +56,8 @@ TEST(OutputTest, StdoutStderr) {
 #endif
   Args args = {"110", "\"stdout from mock\"", "\"stderr from mock\""};
 #else
-  string bin = "sh";
-  Args args = {"-c", "echo hello world"};
+  string bin = "./mock";
+  Args args = {"110", "stdout from mock", "stderr from mock"};
 #endif
 
   Output output = Command(bin).args(args).output();

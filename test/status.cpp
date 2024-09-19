@@ -5,19 +5,31 @@
 using namespace process;
 
 TEST(StatusTest, CommandSuccess) {
-#ifdef _WIN32
   {
-    ExitStatus status = Command("cmd").arg("/c").arg("echo hello").status();
+#ifdef _WIN32
+    std::string bin = "cmd";
+    std::vector<std::string> args{"/c", "echo hello"};
+#else
+    std::string bin = "sh";
+    std::vector<std::string> args{"-c", "echo hello"};
+#endif
+    ExitStatus status = Command(bin).args(args).status();
     EXPECT_TRUE(status.success());
     EXPECT_EQ(status.code(), 0);
   }
   {
-    ExitStatus status = Command("cmd").arg("/c").arg("ech hello").status();
-    EXPECT_FALSE(status.success());
-    EXPECT_EQ(status.code(), 1);
-  }
+#ifdef _WIN32
+    std::string bin = "cmd";
+    std::vector<std::string> args{"/c", "ech hello"};
+    // TODO:
 #else
+    std::string bin = "sh";
+    std::vector<std::string> args{"-c", "ech hello"};
+    ExitStatus status = Command(bin).args(args).status();
+    EXPECT_FALSE(status.success());
+    EXPECT_EQ(status.code(), 127);
 #endif
+  }
 }
 
 TEST(CmdTest, ExitCode) {

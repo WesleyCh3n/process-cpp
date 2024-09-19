@@ -15,8 +15,8 @@ int main(int argc, char *argv[]) {
   }
 
 #ifndef _WIN32
-  std::string app = "sh";
-  std::vector<std::string> args{"-c", std::string(argv[0]), "in"}; // TODO:
+  std::string app = std::string(argv[0]);
+  std::vector<std::string> args{"in"}; // TODO:
 #else
   std::string app = "cmd";
   std::vector<std::string> args{"/c", std::string(argv[0]), "in"};

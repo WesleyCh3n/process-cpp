@@ -9,29 +9,79 @@
 
 extern char **environ;
 
-namespace process {
 using std::optional;
 using std::pair;
 using std::span;
 using std::string;
 using std::vector;
 
-/*============================================================================*/
-ssize_t read_fd(const int fd, span<std::byte> buffer) {
+namespace FileDesc {
+size_t read(int fd, span<std::byte> buffer) {
   ssize_t bytes_read;
   if ((bytes_read = ::read(fd, buffer.data(), buffer.size())) > 0) {
     return bytes_read;
   }
-  return -1;
+  return 0;
 }
 
-size_t write_fd(const int fd, span<const std::byte> buffer) {
+size_t write(int fd, span<const std::byte> buffer) {
   ssize_t written;
-  if ((written = write(fd, buffer.data(), buffer.size())) < 0) {
+  if ((written = ::write(fd, buffer.data(), buffer.size())) < 0) {
     throw std::runtime_error("failed to write file to fd");
   }
   return static_cast<size_t>(written);
 }
+
+size_t read_to_end(int fd, vector<std::byte> &buffer) {
+  size_t buf_init_len = size(buffer);
+  vector<std::byte> tmp(2048);
+  size_t tmp_size = 0;
+  while ((tmp_size = read(fd, tmp)) > 0) {
+    buffer.insert(end(buffer), begin(tmp), begin(tmp) + tmp_size);
+  }
+  return size(buffer) - buf_init_len;
+}
+
+size_t read_to_string(int fd, string &buffer) {
+  size_t buf_init_len = size(buffer);
+  string tmp(2048, '\0');
+  size_t tmp_size = 0;
+  while ((tmp_size = read(fd, std::as_writable_bytes(span{tmp}))) > 0) {
+    buffer.insert(end(buffer), begin(tmp), begin(tmp) + tmp_size);
+  }
+  return size(buffer) - buf_init_len;
+}
+
+void read2(int h1, vector<std::byte> &buf1, int h2, vector<std::byte> &buf2) {
+  vector<std::byte> tmp1(2048), tmp2(2048);
+  size_t size1 = 0, size2 = 0;
+  while ((size1 = read(h1, std::as_writable_bytes(span{tmp1}))) > 0 ||
+         (size2 = read(h2, std::as_writable_bytes(span{tmp2}))) > 0) {
+    if (size1 > 0) {
+      buf1.insert(end(buf1), begin(tmp1), begin(tmp1) + size1);
+    }
+    if (size2 > 0) {
+      buf2.insert(end(buf2), begin(tmp2), begin(tmp2) + size2);
+    }
+  }
+}
+
+void read2_to_string(int h1, string &buf1, int h2, string &buf2) {
+  string tmp1(2048, '\0'), tmp2(2048, '\0');
+  size_t size1 = 0, size2 = 0;
+  while ((size1 = read(h1, std::as_writable_bytes(span{tmp1}))) > 0 ||
+         (size2 = read(h2, std::as_writable_bytes(span{tmp2}))) > 0) {
+    if (size1 > 0) {
+      buf1.insert(end(buf1), begin(tmp1), begin(tmp1) + size1);
+    }
+    if (size2 > 0) {
+      buf2.insert(end(buf2), begin(tmp2), begin(tmp2) + size2);
+    }
+  }
+}
+} // namespace FileDesc
+
+namespace process {
 
 struct Process {
   pid_t pid;
@@ -71,14 +121,11 @@ ExitStatus &ExitStatus::operator=(ExitStatus &&other) {
 bool ExitStatus::success() { return impl_->code == 0; }
 optional<int> ExitStatus::code() { return impl_->code; }
 
+/*============================================================================*/
 struct ChildStdin::Impl {
   int fd;
   Impl(int fd) : fd(fd) {}
-  size_t write(span<const std::byte> buffer) {
-    return write_fd(this->fd, buffer);
-  }
 };
-
 ChildStdin::ChildStdin() : impl_(nullptr) {}
 ChildStdin::~ChildStdin() {}
 ChildStdin::ChildStdin(ChildStdin &&other) { *this = std::move(other); }
@@ -88,17 +135,14 @@ ChildStdin &ChildStdin::operator=(ChildStdin &&other) {
   }
   return *this;
 }
-
 size_t ChildStdin::write(span<const std::byte> buffer) {
-  return impl_->write(buffer);
+  return FileDesc::write(impl_->fd, buffer);
 }
 
 struct ChildStdout::Impl {
   int fd;
   Impl(int fd) : fd(fd) {}
-  ssize_t read(span<std::byte> buffer) { return read_fd(this->fd, buffer); }
 };
-
 ChildStdout::ChildStdout() : impl_(nullptr) {}
 ChildStdout::~ChildStdout() {}
 ChildStdout::ChildStdout(ChildStdout &&other) { *this = std::move(other); }
@@ -108,17 +152,20 @@ ChildStdout &ChildStdout::operator=(ChildStdout &&other) {
   }
   return *this;
 }
-
-ssize_t ChildStdout::read(span<std::byte> buffer) {
-  return impl_->read(buffer);
+size_t ChildStdout::read(span<std::byte> buffer) {
+  return FileDesc::read(impl_->fd, buffer);
+}
+size_t ChildStdout::read_to_end(std::vector<std::byte> &buffer) {
+  return FileDesc::read_to_end(impl_->fd, buffer);
+}
+size_t ChildStdout::read_to_string(std::string &buffer) {
+  return FileDesc::read_to_string(impl_->fd, buffer);
 }
 
 struct ChildStderr::Impl {
   int fd;
   Impl(int fd) : fd(fd) {}
-  ssize_t read(span<std::byte> buffer) { return read_fd(this->fd, buffer); }
 };
-
 ChildStderr::ChildStderr() : impl_(nullptr) {}
 ChildStderr::~ChildStderr() {}
 ChildStderr::ChildStderr(ChildStderr &&other) { *this = std::move(other); }
@@ -128,9 +175,14 @@ ChildStderr &ChildStderr::operator=(ChildStderr &&other) {
   }
   return *this;
 }
-
-ssize_t ChildStderr::read(span<std::byte> buffer) {
-  return impl_->read(buffer);
+size_t ChildStderr::read(span<std::byte> buffer) {
+  return FileDesc::read(impl_->fd, buffer);
+}
+size_t ChildStderr::read_to_end(std::vector<std::byte> &buffer) {
+  return FileDesc::read_to_end(impl_->fd, buffer);
+}
+size_t ChildStderr::read_to_string(std::string &buffer) {
+  return FileDesc::read_to_string(impl_->fd, buffer);
 }
 
 /*============================================================================*/
@@ -235,19 +287,15 @@ int Child::id() { return impl_->id(); }
 ExitStatus Child::wait() { return impl_->wait(); }
 void Child::kill() { impl_->kill(); }
 Output Child::wait_with_output() {
-  // TODO: switch stdout, stderr case
   Output output;
-  std::byte stdout_buf[2048], stderr_buf[2048];
-  ssize_t stdout_size = 0, stderr_size = 0;
-  while (((stdout_size = this->io_stdout->read(stdout_buf)) > 0) ||
-         ((stderr_size = this->io_stderr->read(stderr_buf)) > 0)) {
-    if (stdout_size > 0)
-      output.std_out +=
-          string(reinterpret_cast<const char *>(stdout_buf), stdout_size);
-
-    if (stderr_size > 0)
-      output.std_err +=
-          string(reinterpret_cast<const char *>(stderr_buf), stderr_size);
+  if (io_stdout and not io_stderr) {
+    this->io_stdout->read_to_string(output.std_out);
+  } else if (not io_stdout and io_stderr) {
+    this->io_stderr->read_to_string(output.std_err);
+  } else if (io_stdout and io_stderr) {
+    FileDesc::read2_to_string(io_stdout->impl_->fd, output.std_out,
+                              io_stderr->impl_->fd, output.std_err);
+  } else { // nothing to capture
   }
   output.status = this->wait();
   return output;
@@ -338,9 +386,10 @@ public:
           throw std::runtime_error("failed to change directory");
         }
       }
-      execvp(app.c_str(), arguments.data());
-      throw("execvp failed");
-      _exit(EXIT_FAILURE);
+      if (execvp(app.c_str(), arguments.data()) == -1) {
+        throw std::runtime_error("execvp failed");
+        _exit(EXIT_FAILURE);
+      }
     }
     if (their_stdin.has_value() && *their_stdin != STDIN_FILENO) {
       close(*their_stdin);
@@ -420,15 +469,11 @@ Command &&Command::env_clear() {
 }
 Child Command::spawn() { return impl_->spawn(); }
 ExitStatus Command::status() {
-  // impl_->set_stdin(Stdio::inherit());
-  impl_->set_stdout(Stdio::inherit());
-  impl_->set_stderr(Stdio::inherit());
   Child child = impl_->spawn();
   return child.wait();
 }
 
 Output Command::output() {
-  // impl_->set_stdin(Stdio::inherit());
   impl_->set_stdout(Stdio::pipe());
   impl_->set_stderr(Stdio::pipe());
   Child child = impl_->spawn();

@@ -15,8 +15,7 @@ TEST(PipeTest, ProcessStdoutToProcessStdin) {
   string bin = R"(Release\mock.exe)";
 #endif
 #else
-  string bin = "sh";
-  Args args = {"-c", "echo hello world"};
+  string bin = "./mock";
 #endif
 
   Args args = {"out", "hello", "from", "out"};
