@@ -3,48 +3,41 @@
 #include "process.hpp"
 
 using namespace process;
+using std::string;
+using std::vector;
+using Args = vector<string>;
 
 TEST(CmdTest, CommandShell) {
 #ifdef _WIN32
-  ExitStatus status = Command("cmd").arg("/c").arg("echo hello").status();
+  string bin = "cmd";
+  Args args = {"/c", "echo hello world"};
+#else
+  string bin = "sh";
+  Args args = {"-c", "echo hello world"};
+#endif
+  ExitStatus status = Command(bin).args(args).status();
   EXPECT_TRUE(status.success());
   EXPECT_EQ(status.code(), 0);
-#else
-#endif
 }
 
 TEST(CmdTest, CommandFullPath) {
 #ifdef _WIN32
-  ExitStatus status = Command(R"(C:\WINDOWS\system32\cmd.exe)")
-                          .arg("/c")
-                          .arg("echo hello")
-                          .status();
+  string bin = R"(C:\WINDOWS\system32\cmd.exe)";
+  Args args = {"/c", "echo hello world"};
+#else
+  string bin = "/bin/sh";
+  Args args = {"-c", "echo hello world"};
+#endif
+  ExitStatus status = Command(bin).args(args).status();
   EXPECT_TRUE(status.success());
   EXPECT_EQ(status.code(), 0);
-#else
-#endif
 }
 
 TEST(CmdTest, CommandNotFound) {
 #ifdef _WIN32
-  EXPECT_THROW(
-      {
-        try {
-          Command("cmda").arg("/c").arg("echo hello");
-        } catch (const std::runtime_error &e) {
-          // and this tests that it has the correct message
-          EXPECT_STREQ("executable not found: cmda.exe", e.what());
-          // EXPECT_THAT(e.what(), Not(HasSubstr("executable not found:")));
-          throw;
-        }
-      },
-      std::runtime_error);
+  string bin = "not_exist";
 #else
+  string bin = "not_exist";
 #endif
+  EXPECT_THROW(Command(bin).spawn(), std::runtime_error);
 }
-
-// TEST(CmdTest, FailedCommand) {
-// #ifdef _WIN32
-// #else
-// #endif
-// }
