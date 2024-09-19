@@ -26,8 +26,9 @@ public:
 private:
   struct Impl;
   unique_ptr<Impl> impl_;
-  friend class Command;
   friend class Stdio;
+  friend class Child;
+  friend class Command;
 };
 
 class ChildStdout {
@@ -37,13 +38,16 @@ public:
   ChildStdout(ChildStdout &&other);
   ChildStdout &operator=(ChildStdout &&other);
 
-  ssize_t read(std::span<std::byte> buffer);
+  size_t read(std::span<std::byte> buffer);
+  size_t read_to_end(std::vector<std::byte> &buffer);
+  size_t read_to_string(std::string &buffer);
 
 private:
   struct Impl;
   unique_ptr<Impl> impl_;
-  friend class Command;
   friend class Stdio;
+  friend class Child;
+  friend class Command;
 };
 
 class ChildStderr {
@@ -53,13 +57,16 @@ public:
   ChildStderr(ChildStderr &&other);
   ChildStderr &operator=(ChildStderr &&other);
 
-  ssize_t read(std::span<std::byte> buffer);
+  size_t read(std::span<std::byte> buffer);
+  size_t read_to_end(std::vector<std::byte> &buffer);
+  size_t read_to_string(std::string &buffer);
 
 private:
   struct Impl;
   unique_ptr<Impl> impl_;
-  friend class Command;
   friend class Stdio;
+  friend class Child;
+  friend class Command;
 };
 
 class ExitStatus {

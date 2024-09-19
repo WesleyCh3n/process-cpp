@@ -12,48 +12,70 @@
 
 #include "process.hpp"
 
-namespace process {
 using std::optional;
 using std::pair;
 using std::span;
 using std::string;
 using std::vector;
 
-inline std::string GetLastErrorAsString() {
-  DWORD errorMessageID = ::GetLastError();
-  if (errorMessageID == 0) {
-    return std::string(); // No error message has been recorded
-  }
-
-  LPSTR messageBuffer = nullptr;
-  size_t size = FormatMessageA(
-      FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
-          FORMAT_MESSAGE_IGNORE_INSERTS,
-      NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-      (LPSTR)&messageBuffer, 0, NULL);
-  std::string message(messageBuffer, size);
-  LocalFree(messageBuffer);
-  return message;
-}
-
-DWORD read_handle(HANDLE handle, span<std::byte> buffer) {
+namespace Handle {
+size_t read(HANDLE handle, span<std::byte> buffer) {
   DWORD bytes_read;
-  if (ReadFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
-               &bytes_read, NULL) > 0) {
-    // buffer[bytes_read] = '\0';
-    return bytes_read;
+  if (!ReadFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
+                &bytes_read, NULL)) {
+    return 0;
   }
-  return 0;
+  return static_cast<size_t>(bytes_read);
 }
 
-size_t write_handle(HANDLE handle, span<const std::byte> buffer) {
+size_t write(HANDLE handle, span<const std::byte> buffer) {
   DWORD written;
   if (!WriteFile(handle, buffer.data(), static_cast<DWORD>(buffer.size()),
                  &written, nullptr)) {
+    // FIX: throw?
     throw std::runtime_error("failed to write file to handle");
   }
   return static_cast<size_t>(written);
 }
+
+size_t read_to_end(HANDLE handle, vector<std::byte> &buffer) {
+  size_t buf_init_len = size(buffer);
+  vector<std::byte> tmp(2048);
+  size_t tmp_size = 0;
+  while ((tmp_size = read(handle, tmp)) > 0) {
+    buffer.insert(end(buffer), begin(tmp), begin(tmp) + tmp_size);
+  }
+  return size(buffer) - buf_init_len;
+}
+
+size_t read_to_string(HANDLE handle, string &buffer) {
+  size_t buf_init_len = size(buffer);
+  string tmp(2048, '\0');
+  size_t tmp_size = 0;
+  while ((tmp_size = read(handle, std::as_writable_bytes(span{tmp}))) > 0) {
+    buffer.insert(end(buffer), begin(tmp), begin(tmp) + tmp_size);
+  }
+  return size(buffer) - buf_init_len;
+}
+
+void read2(HANDLE h1, vector<std::byte> &buf1, HANDLE h2,
+           vector<std::byte> &buf2) {}
+void read2_to_string(HANDLE h1, string &buf1, HANDLE h2, string &buf2) {
+  string tmp1(2048, '\0'), tmp2(2048, '\0');
+  size_t size1 = 0, size2 = 0;
+  while ((size1 = read(h1, std::as_writable_bytes(span{tmp1}))) > 0 ||
+         (size2 = read(h2, std::as_writable_bytes(span{tmp2}))) > 0) {
+    if (size1 > 0) {
+      buf1.insert(end(buf1), begin(tmp1), begin(tmp1) + size1);
+    }
+    if (size2 > 0) {
+      buf2.insert(end(buf2), begin(tmp2), begin(tmp2) + size2);
+    }
+  }
+}
+} // namespace Handle
+
+namespace process {
 
 static pair<HANDLE, HANDLE> spawn_pipe_relay(HANDLE source, bool our_readable,
                                              bool their_handle_inheritable) {
@@ -112,6 +134,13 @@ struct Process {
     }
     return *this;
   }
+  void kill() {
+    if (not TerminateProcess(pi.hProcess, 1)) {
+      throw std::runtime_error(
+          std::format("failed to terminate process: pid[{}]", id()));
+    }
+  }
+  DWORD id() { return pi.dwProcessId; }
   int wait() {
     DWORD exit_code;
     if (WaitForSingleObject(pi.hProcess, INFINITE) != WAIT_OBJECT_0) {
@@ -148,65 +177,61 @@ optional<int> ExitStatus::code() { return impl_->code; }
 struct ChildStdin::Impl {
   HANDLE handle;
   Impl(HANDLE h) : handle(h) {}
-  size_t write(span<const std::byte> buffer) {
-    return write_handle(this->handle, buffer);
-  }
 };
-
 ChildStdin::ChildStdin() : impl_(nullptr) {}
 ChildStdin::~ChildStdin() {}
 ChildStdin::ChildStdin(ChildStdin &&other) { *this = std::move(other); }
 ChildStdin &ChildStdin::operator=(ChildStdin &&other) {
-  if (this != &other) {
+  if (this != &other)
     this->impl_ = std::move(other.impl_);
-  }
   return *this;
 }
-
 size_t ChildStdin::write(span<const std::byte> buffer) {
-  return impl_->write(buffer);
+  return Handle::write(impl_->handle, buffer);
 }
 
 struct ChildStdout::Impl {
   HANDLE handle;
   Impl(HANDLE h) : handle(h) {}
-  ssize_t read(span<std::byte> buffer) {
-    return read_handle(this->handle, buffer);
-  }
 };
 ChildStdout::ChildStdout() : impl_(nullptr) {}
 ChildStdout::~ChildStdout() {}
 ChildStdout::ChildStdout(ChildStdout &&other) { *this = std::move(other); }
 ChildStdout &ChildStdout::operator=(ChildStdout &&other) {
-  if (this != &other) {
+  if (this != &other)
     this->impl_ = std::move(other.impl_);
-  }
   return *this;
 }
-
-ssize_t ChildStdout::read(span<std::byte> buffer) {
-  return impl_->read(buffer);
+size_t ChildStdout::read(span<std::byte> buffer) {
+  return Handle::read(impl_->handle, buffer);
+}
+size_t ChildStdout::read_to_end(std::vector<std::byte> &buffer) {
+  return Handle::read_to_end(impl_->handle, buffer);
+}
+size_t ChildStdout::read_to_string(std::string &buffer) {
+  return Handle::read_to_string(impl_->handle, buffer);
 }
 
 struct ChildStderr::Impl {
   HANDLE handle;
   Impl(HANDLE h) : handle(h) {}
-  ssize_t read(span<std::byte> buffer) {
-    return read_handle(this->handle, buffer);
-  }
 };
 ChildStderr::ChildStderr() : impl_(nullptr) {}
 ChildStderr::~ChildStderr() {}
 ChildStderr::ChildStderr(ChildStderr &&other) { *this = std::move(other); }
 ChildStderr &ChildStderr::operator=(ChildStderr &&other) {
-  if (this != &other) {
+  if (this != &other)
     this->impl_ = std::move(other.impl_);
-  }
   return *this;
 }
-
-ssize_t ChildStderr::read(span<std::byte> buffer) {
-  return impl_->read(buffer);
+size_t ChildStderr::read(span<std::byte> buffer) {
+  return Handle::read(impl_->handle, buffer);
+}
+size_t ChildStderr::read_to_end(std::vector<std::byte> &buffer) {
+  return Handle::read_to_end(impl_->handle, buffer);
+}
+size_t ChildStderr::read_to_string(std::string &buffer) {
+  return Handle::read_to_string(impl_->handle, buffer);
 }
 
 /*============================================================================*/
@@ -295,22 +320,7 @@ Stdio Stdio::from(ChildStderr other) {
 /*============================================================================*/
 struct Child::Impl {
   Process pi;
-
   Impl(Process pi) : pi(std::move(pi)) {}
-
-  int id() { return pi.pi.dwProcessId; }
-  ExitStatus wait() {
-    int code = pi.wait();
-    ExitStatus status;
-    status.impl_->code = code;
-    return status;
-  }
-  void kill() {
-    if (not TerminateProcess(pi.pi.hProcess, 1)) {
-      throw std::runtime_error(
-          std::format("failed to terminate process: pid[{}]", id()));
-    }
-  }
 };
 Child::Child() : impl_(nullptr){};
 Child::~Child(){};
@@ -322,21 +332,24 @@ Child &Child::operator=(Child &&other) {
   return *this;
 }
 
-int Child::id() { return impl_->id(); }
-ExitStatus Child::wait() { return impl_->wait(); }
-void Child::kill() { impl_->kill(); }
+int Child::id() { return impl_->pi.id(); }
+ExitStatus Child::wait() {
+  int code = impl_->pi.wait();
+  ExitStatus status;
+  status.impl_->code = code;
+  return status;
+}
+void Child::kill() { impl_->pi.kill(); }
 Output Child::wait_with_output() {
   Output output;
-  std::byte stdout_buf[2048], stderr_buf[2048];
-  ssize_t stdout_size = 0, stderr_size = 0;
-  while (((stdout_size = this->io_stdout->read(span{stdout_buf})) > 0) ||
-         ((stderr_size = this->io_stderr->read(span{stderr_buf})) > 0)) {
-    if (stdout_size > 0)
-      output.std_out +=
-          string(reinterpret_cast<const char *>(stdout_buf), stdout_size);
-    if (stderr_size > 0)
-      output.std_err +=
-          string(reinterpret_cast<const char *>(stderr_buf), stderr_size);
+  if (io_stdout and not io_stderr) {
+    this->io_stdout->read_to_string(output.std_out);
+  } else if (not io_stdout and io_stderr) {
+    this->io_stderr->read_to_string(output.std_err);
+  } else if (io_stdout and io_stderr) {
+    Handle::read2_to_string(io_stdout->impl_->handle, output.std_out,
+                            io_stderr->impl_->handle, output.std_err);
+  } else { // nothing to capture
   }
   output.status = this->wait();
   return output;
