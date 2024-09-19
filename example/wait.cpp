@@ -4,7 +4,7 @@
 
 using namespace process;
 int main() {
-#ifndef _WIND32
+#ifndef _WIN32
   std::string app = "echo";
   std::vector<std::string> args{"hello", "world"};
 #else
@@ -21,14 +21,19 @@ int main() {
       std::cout << std::boolalpha << status.success() << '\n';
     }
     {
-      auto child = Command(app)
-                       .args(args)
-                       .std_out(Stdio::pipe())
-                       .std_err(Stdio::pipe())
-                       .spawn();
+      Child child = Command(app)
+                        .args(args)
+                        .std_out(Stdio::pipe())
+                        .std_err(Stdio::pipe())
+                        .spawn();
       Output output = child.wait_with_output();
 
-      ExitStatus &status = output.status;
+      std::cout << std::quoted(output.std_out) << '\n';
+      std::cout << std::quoted(output.std_err) << '\n';
+    }
+    {
+      Output output = Command(app).args(args).output();
+
       std::cout << std::quoted(output.std_out) << '\n';
       std::cout << std::quoted(output.std_err) << '\n';
     }
