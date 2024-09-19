@@ -8,6 +8,6 @@ foreach(file ${files})
   )
   target_link_libraries(
     ${example_name}
-    std-process
+    ${CMAKE_PROJECT_NAME}
   )
 endforeach()

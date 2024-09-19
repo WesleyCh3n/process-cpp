@@ -30,7 +30,7 @@ foreach(file ${files})
   target_link_libraries(
     ${test_name}
     GTest::gtest_main
-    std-process
+    ${CMAKE_PROJECT_NAME}
   )
   gtest_discover_tests(${test_name})
 endforeach()
