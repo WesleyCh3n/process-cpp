@@ -2,19 +2,47 @@
 
 A c++ implementation similar to Rust's [std::process](https://doc.rust-lang.org/std/process/index.html).
 
-## Build
+## Quick Start
 
+Following quick start is for linux and mac
+
+1. get the library to your directory
 ```sh
-cmake -Bbuild .
-cmake --build build -j
+wget https://github.com/WesleyCh3n/process-cpp/raw/refs/heads/main/src/process.hpp
+wget https://github.com/WesleyCh3n/process-cpp/raw/refs/heads/main/src/unix.cpp
 ```
 
-For more cmake options, see [CMakeLists.txt](https://github.com/WesleyCh3n/std-process/blob/main/CMakeLists.txt)
+2. create a new file named `example.cpp` with following:
 
-Tested environments:
-- Windows 11 22H2
-- Ubuntu
-- MacOSX
+```cpp
+#include "process.hpp"
+
+#include <iomanip>
+#include <iostream>
+
+int main(int argc, char *argv[]) {
+  auto output =
+      process::Command("sh").arg("-c").arg("echo hello world").output();
+  std::cout << std::boolalpha << output.status.success() << '\n';
+  std::cout << std::quoted(output.std_out) << '\n';
+  std::cout << std::quoted(output.std_err) << '\n';
+}
+```
+
+3. Compile
+
+```sh
+c++ -std=c++20 -o example example.cpp unix.cpp
+```
+
+4. `./example`
+
+```sh
+true
+"hello world
+"
+""
+```
 
 ## Usage
 
@@ -70,12 +98,22 @@ int main() {
 }
 ```
 
+## Build and Install
+
+```sh
+cmake -Bbuild .
+cmake --build build -j
+```
+
+For more CMake options, see [CMakeLists.txt](https://github.com/WesleyCh3n/std-process/blob/main/CMakeLists.txt)
+
+
 ## Run Test
 
 After test built,
 
 ```sh
-ctest --test-dir ./build/test/
+ctest --output-on-failure --test-dir ./build/test/
 ```
 
 ## License
