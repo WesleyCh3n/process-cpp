@@ -401,13 +401,13 @@ public:
   void add_env(const string &key, const string &val) {
     envs.push_back({key, val});
   }
-  void setup_io() {
+  void setup_io(Stdio::Value mode) {
     if (not io_stdin)
       io_stdin = Stdio::inherit();
     if (not io_stdout)
-      io_stdout = Stdio::inherit();
+      io_stdout = Stdio(mode);
     if (not io_stderr)
-      io_stderr = Stdio::inherit();
+      io_stderr = Stdio(mode);
   }
 
   std::string find_exe_path(const std::string &name) {
@@ -551,17 +551,17 @@ Command &&Command::env_clear() {
   return std::move(*this);
 }
 Child Command::spawn() {
-  impl_->setup_io();
+  impl_->setup_io(Stdio::Value::Inherit);
   return impl_->spawn();
 }
 ExitStatus Command::status() {
-  impl_->setup_io();
+  impl_->setup_io(Stdio::Value::Inherit);
   Child child = impl_->spawn();
   return child.wait();
 }
 
 Output Command::output() {
-  impl_->setup_io();
+  impl_->setup_io(Stdio::Value::NewPipe);
   Child child = impl_->spawn();
   return child.wait_with_output();
 }
