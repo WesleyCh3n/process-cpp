@@ -2,9 +2,11 @@
 #include "process.hpp"
 
 #include <csignal>
+#include <fcntl.h>
 #include <iostream>
 #include <optional>
 #include <span>
+#include <sys/wait.h>
 #include <unistd.h>
 
 extern char **environ;
@@ -221,8 +223,13 @@ struct Stdio::Impl {
       else
         throw std::runtime_error("invalid handle id");
     }
-    case Value::Null:
-      return {std::nullopt, std::nullopt};
+    case Value::Null: {
+      int null_fd = open("/dev/null", id == 0 ? O_RDONLY : O_WRONLY);
+      if (null_fd == -1) {
+        throw std::runtime_error("failed to open /dev/null");
+      }
+      return {std::nullopt, null_fd};
+    }
     default:
       return {std::nullopt, std::nullopt};
     }
@@ -305,18 +312,17 @@ Output Child::wait_with_output() {
 class Command::Impl {
   string app;
   vector<string> args;
-  Stdio io_stdin;
-  Stdio io_stdout;
-  Stdio io_stderr;
+  optional<Stdio> io_stdin;
+  optional<Stdio> io_stdout;
+  optional<Stdio> io_stderr;
   optional<string> cwd;
   bool inherit_env;
   vector<pair<string, string>> envs;
 
 public:
   Impl()
-      : app("sh"), args(vector<string>()), io_stdin(Stdio::inherit()),
-        io_stdout(Stdio::inherit()), io_stderr(Stdio::inherit()),
-        inherit_env(true) {}
+      : app("sh"), args(vector<string>()), io_stdin(std::nullopt),
+        io_stdout(std::nullopt), io_stderr(std::nullopt), inherit_env(true) {}
   ~Impl() = default;
   void set_app(string str) { app = str; }
   void add_args(const string &arg) { args.push_back(arg); }
@@ -343,11 +349,22 @@ public:
     envs.push_back({key, value});
   };
   void clear_env() { inherit_env = false; }
+  void setup_io(Stdio::Value mode) {
+    if (not io_stdin) {
+      io_stdin = Stdio::inherit(); // FIX:
+    }
+    if (not io_stdout) {
+      io_stdout = Stdio(mode);
+    }
+    if (not io_stderr) {
+      io_stderr = Stdio(mode);
+    }
+  }
   Child spawn() {
     auto arguments = build_args();
-    auto [our_stdin, their_stdin] = io_stdin.impl_->to_fds(0);
-    auto [our_stdout, their_stdout] = io_stdout.impl_->to_fds(1);
-    auto [our_stderr, their_stderr] = io_stderr.impl_->to_fds(2);
+    auto [our_stdin, their_stdin] = io_stdin->impl_->to_fds(0);
+    auto [our_stdout, their_stdout] = io_stdout->impl_->to_fds(1);
+    auto [our_stderr, their_stderr] = io_stderr->impl_->to_fds(2);
     pid_t pid = fork();
     if (pid == -1)
       throw std::runtime_error("Failed to fork");
@@ -467,15 +484,18 @@ Command &&Command::env_clear() {
   impl_->clear_env();
   return std::move(*this);
 }
-Child Command::spawn() { return impl_->spawn(); }
+Child Command::spawn() {
+  impl_->setup_io(Stdio::Value::Inherit);
+  return impl_->spawn();
+}
 ExitStatus Command::status() {
+  impl_->setup_io(Stdio::Value::Inherit);
   Child child = impl_->spawn();
   return child.wait();
 }
 
 Output Command::output() {
-  impl_->set_stdout(Stdio::pipe());
-  impl_->set_stderr(Stdio::pipe());
+  impl_->setup_io(Stdio::Value::NewPipe);
   Child child = impl_->spawn();
   return child.wait_with_output();
 }
