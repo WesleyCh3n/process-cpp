@@ -32,6 +32,15 @@ int main() {
       std::cout << std::quoted(out) << '\n';
       std::cout << std::quoted(err) << '\n';
     }
+    {
+      auto output = Command(app)
+                        .args(args)
+                        .std_out(Stdio::null()) // pipe to null
+                        .output();
+      std::cout << *output.status.code() << '\n';
+      std::cout << std::quoted(output.std_out) << '\n';
+      std::cout << std::quoted(output.std_err) << '\n';
+    }
   } catch (const std::exception &e) {
     std::cerr << e.what();
   }
