@@ -277,8 +277,12 @@ struct Stdio::Impl {
       return {nullptr, nullptr};
     }
     case Value::Null: {
-      throw std::logic_error("unimplemented");
-      return {nullptr, nullptr};
+      SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), NULL, TRUE};
+      auto access_mode = (id == 0 ? GENERIC_READ : GENERIC_WRITE);
+      HANDLE null_handle =
+          CreateFile("NUL", access_mode, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                     &sa, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+      return {nullptr, null_handle};
     }
     default: {
       throw std::logic_error("invalid stdio type");
@@ -359,18 +363,17 @@ Output Child::wait_with_output() {
 class Command::Impl {
   string app;
   vector<string> args;
-  Stdio io_stdin;
-  Stdio io_stdout;
-  Stdio io_stderr;
+  optional<Stdio> io_stdin;
+  optional<Stdio> io_stdout;
+  optional<Stdio> io_stderr;
   optional<string> cwd;
   bool inherit_env;
   vector<pair<string, string>> envs;
 
 public:
   Impl()
-      : app(string()), args(vector<string>()), io_stdin(Stdio::inherit()),
-        io_stdout(Stdio::inherit()), io_stderr(Stdio::inherit()),
-        inherit_env(true) {
+      : app(string()), args(vector<string>()), io_stdin(std::nullopt),
+        io_stdout(std::nullopt), io_stderr(std::nullopt), inherit_env(true) {
     char path[MAX_PATH];
     UINT size = 0;
     if ((size = GetSystemDirectory(path, MAX_PATH)) == 0)
@@ -398,11 +401,19 @@ public:
   void add_env(const string &key, const string &val) {
     envs.push_back({key, val});
   }
+  void setup_io() {
+    if (not io_stdin)
+      io_stdin = Stdio::inherit();
+    if (not io_stdout)
+      io_stdout = Stdio::inherit();
+    if (not io_stderr)
+      io_stderr = Stdio::inherit();
+  }
 
   std::string find_exe_path(const std::string &name) {
     char path[MAX_PATH];
     if (SearchPath(nullptr, name.c_str(), NULL, MAX_PATH, path, NULL) == 0) {
-      throw std::runtime_error(std::format("executable not found: {}", name));
+      throw std::runtime_error("program not found");
     }
     return std::string(path);
   }
@@ -438,9 +449,9 @@ public:
   }
 
   Child spawn() {
-    auto [our_stdin, their_stdin] = io_stdin.impl_->to_handles(0);    // w, r
-    auto [our_stdout, their_stdout] = io_stdout.impl_->to_handles(1); // r, w
-    auto [our_stderr, their_stderr] = io_stderr.impl_->to_handles(2); // r, w
+    auto [our_stdin, their_stdin] = io_stdin->impl_->to_handles(0);    // w, r
+    auto [our_stdout, their_stdout] = io_stdout->impl_->to_handles(1); // r, w
+    auto [our_stderr, their_stderr] = io_stderr->impl_->to_handles(2); // r, w
     PROCESS_INFORMATION pi = {0};
     STARTUPINFO si = {0};
     si.cb = sizeof(STARTUPINFO);
@@ -539,19 +550,18 @@ Command &&Command::env_clear() {
   impl_->clear_env();
   return std::move(*this);
 }
-Child Command::spawn() { return impl_->spawn(); }
+Child Command::spawn() {
+  impl_->setup_io();
+  return impl_->spawn();
+}
 ExitStatus Command::status() {
-  // impl_->set_stdin(Stdio::inherit());
-  impl_->set_stdout(Stdio::inherit());
-  impl_->set_stderr(Stdio::inherit());
+  impl_->setup_io();
   Child child = impl_->spawn();
   return child.wait();
 }
 
 Output Command::output() {
-  // impl_->set_stdin(Stdio::inherit());
-  impl_->set_stdout(Stdio::pipe());
-  impl_->set_stderr(Stdio::pipe());
+  impl_->setup_io();
   Child child = impl_->spawn();
   return child.wait_with_output();
 }
